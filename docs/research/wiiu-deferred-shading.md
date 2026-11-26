@@ -2,6 +2,50 @@
 
 Date: 2026-09-28 Subsystem: render, water. Related gap: RENDER-002 (archived reference). Context: [Water](wiiu-water-variants.md).
 
+## Hateno terrain buffer diagnostic
+
+Reference capture recorded with Wii U JPN v208, Cemu 1.26.2f, Vulkan,
+zero graphic packs, frame 3830. The local capture and game data remain
+outside source control.
+
+| Stage | Reference event | Observed resources |
+| --- | --- | --- |
+| Opaque geometry | 1822 | RT0 RG8, RT1 sRGB RGBA8, RT3 RGBA8 and camera depth D32, 1280×720 |
+| Coarse material classes | 5774 | D16 at 640×360, using mask 0x0e |
+| Sun shadow raster | 6041, 6873, 8155 | Three 720×720 views into a D16 array |
+| Pre-shading | 11011–11023 | Five outputs at 640×360, including two layers of a shared R11G11B10F texture and an R8 guide |
+| Full material classes | 12831 | Separate D16 at 1280×720, using mask 0x0f |
+| Material composition | 12855–12894 | Full-resolution Equal draws, HDR R11G11B10F, depth/normal-guided half-resolution reads |
+
+The terrain diagnostic is opt-in. It takes the view's actual terrain
+material outputs, prepares RT0/RT1/RT3, resolves D16 classes independently
+at both resolutions, and draws the field class (4) with a full-resolution
+Equal test. The mosaic shows albedo, encoded normal, half-resolution class
+coverage, and full-resolution Equal coverage in reading order. This diagnostic
+does not run the five-output pre-shading or replace the normal lighting.
+
+Run against existing Hateno assets:
+
+    cargo render --assets assets-hateno --place hateno --terrain-gbuffer
+    cargo render --assets assets-hateno --place hateno --terrain-gbuffer --screenshot captures/terrain-gbuffer.png
+
+**SI-GBUF-01**: for this diagnostic, Bevy's deferred prepass transports
+the terrain albedo, octahedral normal and roughness to the native-format
+targets via a fullscreen unpack. Albedo and normal therefore go through
+Bevy quantization. This extra transport and duplicate storage are temporary.
+The diagnostic uses the existing camera depth and only wires the field's
+class. Other materials, the capture cube's view, and the final material
+blend still need their native paths in a deferred implementation. By
+default the viewer continues using its forward terrain shader and its
+existing cube cameras.
+
+Next, make the field materials write RT0/RT1/RT3 directly. Then move the
+recovered terrain pre-shading and guided reconstruction into dedicated
+passes, using the existing field lighting equations, sky and cloud-shadow inputs and
+post-processing. Extend the class table to vegetation and characters once
+the field works end to end. Add the translucent G-buffer path and special
+HDR writes after reproducing the opaque composition.
+
 ## Question and sources
 
 - What makes G-buffer water (material id 22, albedo, normal, gloss)

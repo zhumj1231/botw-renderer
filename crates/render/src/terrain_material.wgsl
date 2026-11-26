@@ -162,6 +162,7 @@ fn fragment(
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
 
 #ifdef PREPASS_PIPELINE
+    pbr_input.material.perceptual_roughness = 1.0 - clamp(gloss, 0.0, 1.0);
     let out = deferred_output(in, pbr_input);
 #else
     var out: FragmentOutput;

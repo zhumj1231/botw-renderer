@@ -10,6 +10,7 @@ use bevy::asset::{RenderAssetUsages, load_internal_asset, uuid_handle};
 use bevy::image::{
     ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
 };
+use bevy::material::OpaqueRendererMethod;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
@@ -87,6 +88,23 @@ impl MaterialExtension for TerrainExtension {
     fn fragment_shader() -> ShaderRef {
         SHADER.into()
     }
+
+    fn deferred_fragment_shader() -> ShaderRef {
+        SHADER.into()
+    }
+}
+
+pub fn base_material(gbuffer: bool) -> StandardMaterial {
+    let mut material = StandardMaterial {
+        perceptual_roughness: 1.0,
+        reflectance: 0.1,
+        ..default()
+    };
+    if gbuffer {
+        material.opaque_render_method = OpaqueRendererMethod::Deferred;
+        material.deferred_lighting_pass_id = crate::terrain_gbuffer::FIELD_CLASS;
+    }
+    material
 }
 
 /// `TerrainExtension::tile.w` of tiles without the game's textures: their

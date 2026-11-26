@@ -39,6 +39,7 @@ mod sky_lut;
 mod sky_occlusion;
 mod source;
 mod terrain;
+mod terrain_gbuffer;
 mod terrain_material;
 mod texture;
 mod viewer;
@@ -50,7 +51,7 @@ use std::sync::Arc;
 
 use asset_format::Places;
 use bevy::camera::{Exposure, Hdr};
-use bevy::core_pipeline::prepass::DepthPrepass;
+use bevy::core_pipeline::prepass::{DeferredPrepass, DepthPrepass};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::light::{Atmosphere, AtmosphereEnvironmentMapLight};
@@ -81,6 +82,7 @@ usage: render [options]
   --no-vsync       disable display sync and background update throttling
   --occlusion-culling  skip meshes hidden behind opaque geometry (experimental)
   --profile        log frame/pass timings and scene counts every 10 seconds
+  --terrain-gbuffer  show the experimental terrain G-buffer and class depths
   --screenshot <png>  once the world has loaded, save a frame and exit
   --character <name>  stand a baked character (characters/<name>.ron, e.g.
                    link) on the ground where the start camera looks,
@@ -113,6 +115,7 @@ struct Args {
     no_vsync: bool,
     occlusion_culling: bool,
     profile: bool,
+    terrain_gbuffer: bool,
     screenshot: Option<PathBuf>,
     /// A character to stand where the camera looks, and its clip.
     character: Option<String>,
@@ -131,6 +134,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         no_vsync: false,
         occlusion_culling: false,
         profile: false,
+        terrain_gbuffer: false,
         screenshot: None,
         character: None,
         clip: "Nml_Wait".into(),
@@ -166,6 +170,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--no-vsync" => args.no_vsync = true,
             "--occlusion-culling" => args.occlusion_culling = true,
             "--profile" => args.profile = true,
+            "--terrain-gbuffer" => args.terrain_gbuffer = true,
             "--screenshot" => args.screenshot = Some(value()?.into()),
             "--character" => args.character = Some(value()?),
             "--clip" => args.clip = value()?,
@@ -397,9 +402,12 @@ fn main() -> AppExit {
         .add_systems(
             Startup,
             move |commands: Commands, media: ResMut<Assets<ScatteringMedium>>| {
-                setup_scene(commands, media, start, args.occlusion_culling)
+                setup_scene(commands, media, start, args.occlusion_culling, args.terrain_gbuffer)
             },
         );
+    if args.terrain_gbuffer {
+        app.add_plugins(terrain_gbuffer::TerrainGBufferPlugin);
+    }
     app.add_plugins(CameraPlugin);
     if args.screenshot.is_none() {
         app.add_plugins(diagnostics::DiagnosticsPlugin);
@@ -442,6 +450,7 @@ fn setup_scene(
     mut media: ResMut<Assets<ScatteringMedium>>,
     (transform, fly): (Transform, FlyCamera),
     occlusion_culling: bool,
+    terrain_gbuffer: bool,
 ) {
     // A physically based sky: the atmosphere draws the sky and lights the
     // scene through an environment map. Its own haze over the terrain (the
@@ -483,6 +492,9 @@ fn setup_scene(
         // under it.
         DepthPrepass,
     ));
+    if terrain_gbuffer {
+        camera.insert(DeferredPrepass);
+    }
     if occlusion_culling {
         camera.insert(OcclusionCulling);
     }
