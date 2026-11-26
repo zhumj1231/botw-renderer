@@ -208,33 +208,49 @@ fn edge(frame: Frame, offset: vec2<f32>) -> f32 {
 struct MainLight {
     to_light: vec3<f32>,
     color: vec3<f32>,
+    index: u32,
     shadow: f32,
 }
 
 // SI-LGT-09: brightest Bevy light as the main light (game: one dir_main).
-fn main_light(pbr: PbrInput, view_z: f32) -> MainLight {
+fn main_light_source() -> MainLight {
     var light: MainLight;
     light.to_light = vec3<f32>(0.0, 1.0, 0.0);
     light.color = vec3<f32>(0.0);
     light.shadow = 1.0;
-    var index = 0u;
     var brightest = -1.0;
     for (var i: u32 = 0u; i < view_bindings::lights.n_directional_lights; i = i + 1u) {
         let brightness = luma(view_bindings::lights.directional_lights[i].color.rgb);
         if brightness > brightest {
             brightest = brightness;
-            index = i;
+            light.index = i;
         }
     }
     if view_bindings::lights.n_directional_lights > 0u {
-        let sun = &view_bindings::lights.directional_lights[index];
+        let sun = &view_bindings::lights.directional_lights[light.index];
         light.to_light = (*sun).direction_to_light;
         light.color = (*sun).color.rgb / PI * view.exposure;
-        let receives = (pbr.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u;
-        if receives && ((*sun).flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u {
-            light.shadow = shadows::fetch_directional_shadow(index, pbr.world_position, pbr.world_normal, view_z, pbr.frag_coord.xy);
+    }
+    return light;
+}
+
+fn field_shadow(light: MainLight, pbr: PbrInput, view_z: f32, clouds: f32, translucent: f32) -> f32 {
+    if translucent > 0.5 && !LEAF_SHADOW_FROM_MAP {
+        return clouds;
+    }
+    let receives = (pbr.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u;
+    if receives && view_bindings::lights.n_directional_lights > 0u {
+        let flags = view_bindings::lights.directional_lights[light.index].flags;
+        if (flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u {
+            return clouds * shadows::fetch_directional_shadow(light.index, pbr.world_position, pbr.world_normal, view_z, pbr.frag_coord.xy);
         }
     }
+    return clouds;
+}
+
+fn main_light(pbr: PbrInput, view_z: f32) -> MainLight {
+    var light = main_light_source();
+    light.shadow = field_shadow(light, pbr, view_z, 1.0, 0.0);
     return light;
 }
 
@@ -364,32 +380,17 @@ fn sky_visibility(cover: f32, world_y: f32, n_y: f32, flag: f32, z: f32) -> f32 
 // rain's main pass (programs 33, 29) raises the gloss towards 0.75 and,
 // once the surface is more than half wet, tilts the normal towards the
 // camera (docs/research/weather.md §11.5). Nothing else changes.
-fn field_color(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao: f32, cover: f32, means: texture_2d<f32>, rain: vec2<f32>) -> vec3<f32> {
+fn wet_field(s_in: FieldSurface, V: vec3<f32>, rain: vec2<f32>) -> FieldSurface {
     var s = s_in;
-    // From the camera to the point.
-    let V = -pbr.V;
     let wet_g = saturate(2.0 * rain.x);
     let wet_n = saturate(2.0 * rain.x - 1.0);
     s.gloss = s.gloss + (0.75 - s.gloss) * wet_g;
     s.N = normalize(s.N + V * rain.y * wet_n * (0.1 + 0.4 * s.flag));
+    return s;
+}
+
+fn field_ambient_at(s: FieldSurface, z: f32, ao: f32, vis: f32, means: texture_2d<f32>) -> vec3<f32> {
     let N = s.N;
-    let z = -frame.p.z;
-    let light = main_light(pbr, frame.p.z);
-    let to_light = light.to_light;
-    // Bevy's `colour·lux/π·exposure`, which the viewer's units make the
-    // game's `env5` (`daynight.rs`; docs/CHOICES.md, FIELD-LIGHT-001).
-    let C = light.color;
-    var S = light.shadow * shadow;
-    if s.translucent > 0.5 && !LEAF_SHADOW_FROM_MAP {
-        S = shadow;
-    }
-    let c = saturate(dot(N, pbr.V));
-    let n_l = saturate(dot(N, to_light));
-    let m = s.metal;
-    let gl = s.gloss;
-
-    let vis = sky_visibility(cover, pbr.world_position.y, N.y, s.flag, z);
-
     // Pre-shading: the cube map's light along the normal (the foliage's:
     // along the normal raised to the sky), more saturated where it is
     // occluded, far away the analyzer's sky up and down.
@@ -408,8 +409,19 @@ fn field_color(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao:
     let near = c_sat * amb_in.scale * (1.0 + vis) * 0.5 * (1.0 - occluded);
     let hemi = mix(amb_in.up, amb_in.down, (1.0 - N.y) * 0.5);
     // SI-LGT-10: sky occlusion, ambient tint and specular terms simplified.
-    let ambient = mix(near, hemi, saturate(0.01 * z - 0.5));
+    return mix(near, hemi, saturate(0.01 * z - 0.5));
+}
 
+fn field_compose(pbr: PbrInput, s: FieldSurface, frame: Frame, light: MainLight, S: f32, ambient: vec3<f32>, vis: f32) -> vec3<f32> {
+    let V = -pbr.V;
+    let N = s.N;
+    let to_light = light.to_light;
+    // Bevy's `colour·lux/π·exposure`, mapped to the game's `env5`.
+    let C = light.color;
+    let c = saturate(dot(N, pbr.V));
+    let n_l = saturate(dot(N, to_light));
+    let m = s.metal;
+    let gl = s.gloss;
     // The main pass: Lambert, GGX with Schlick's Fresnel, the sky's
     // reflection.
     let alpha = saturate((1.0 - gl) * (1.0 - gl) + 0.01);
@@ -448,4 +460,13 @@ fn field_color(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao:
     }
     let diffuse = (C * direct + ambient) * (1.0 - m) * rim;
     return s.albedo * diffuse + spec + env + local_lights(pbr, N, s.albedo * (1.0 - m), frame.p.z);
+}
+
+fn field_color(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao: f32, cover: f32, means: texture_2d<f32>, rain: vec2<f32>) -> vec3<f32> {
+    let s = wet_field(s_in, -pbr.V, rain);
+    let light = main_light_source();
+    let S = field_shadow(light, pbr, frame.p.z, shadow, s.translucent);
+    let vis = sky_visibility(cover, pbr.world_position.y, s.N.y, s.flag, -frame.p.z);
+    let ambient = field_ambient_at(s, -frame.p.z, ao, vis, means);
+    return field_compose(pbr, s, frame, light, S, ambient, vis);
 }

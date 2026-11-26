@@ -1111,7 +1111,7 @@ fn layers(
 /// texture and their parameters. `params.sun` follows the main light for
 /// the shaders that cannot see the scene's lights (the grass's vertex
 /// shader).
-#[derive(Resource, Clone)]
+#[derive(Resource, Clone, bevy::render::extract_resource::ExtractResource)]
 pub struct CloudShadows {
     pub noise: Handle<Image>,
     /// The cloud shadow's texture (`p_shadow_clouds`, [`upload_shadow_map`]);

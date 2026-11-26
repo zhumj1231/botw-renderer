@@ -212,7 +212,7 @@ fn draw_cube_mean(
 /// The rotations the field's ambient occlusion turns its samples by
 /// (`ssao_rotation` in `deferred_light.wgsl`); every field material binds
 /// it.
-#[derive(Resource, Clone)]
+#[derive(Resource, Clone, ExtractResource)]
 pub struct SsaoNoise(pub Handle<Image>);
 
 /// Sixteen turns, a sixteenth of a circle apart, spread over 4×4 texels in

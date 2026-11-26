@@ -290,13 +290,18 @@ fn diffuse_gain(look: Look) -> f32 {
 // fog already lays a haze over every material, so this returns `color`
 // untouched: nothing is hazed twice (`fog.rs` decides which of the two is
 // on).
-fn apply_haze(look: Look, color: vec3<f32>, world_position: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
+struct Haze {
+    transmission: f32,
+    scattering: vec3<f32>,
+}
+
+fn haze_terms(look: Look, world_position: vec3<f32>, view_dir: vec3<f32>) -> Haze {
 #ifdef DISTANCE_FOG
-    return color;
+    return Haze(1.0, vec3(0.0));
 #else
     let far = look.haze[0].a;
     if far <= 0.0 {
-        return color;
+        return Haze(1.0, vec3(0.0));
     }
     let fog = look.haze[1];
     let forward = -view.world_from_view[2].xyz;
@@ -324,9 +329,15 @@ fn apply_haze(look: Look, color: vec3<f32>, world_position: vec3<f32>, view_dir:
     let up = pow(max(saturate(view_dir.y), 1e-6), b[2].x);
     let adhoc = b[0].a * (1.0 - pow(max(1.0 - tb, 1e-6), b[1].z)) * (1.0 - b[2].y * up) * w;
     let through = (1.0 - amount) * (1.0 - adhoc);
-    return color * (through * (1.0 - height)) + haze * (inscatter * amount * (1.0 - adhoc))
+    let scattering = haze * (inscatter * amount * (1.0 - adhoc))
         + b[0].rgb * adhoc + look.spare[0].rgb * (height * through);
+    return Haze(through * (1.0 - height), scattering);
 #endif
+}
+
+fn apply_haze(look: Look, color: vec3<f32>, world_position: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
+    let haze = haze_terms(look, world_position, view_dir);
+    return color * haze.transmission + haze.scattering;
 }
 
 // The noise (`cloud_noise`, red) at texture coordinates `uv`, repeating and

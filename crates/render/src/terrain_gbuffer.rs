@@ -1,5 +1,6 @@
 //! Field G-buffer attachments, class-depth passes and diagnostic display.
 mod geometry;
+mod lighting;
 use bevy::asset::{load_internal_asset, uuid_handle};
 use bevy::core_pipeline::FullscreenShader;
 use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d};
@@ -22,14 +23,20 @@ const ALBEDO_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
 const NORMAL_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 
 #[derive(Component, Clone, Copy, ExtractComponent)]
-pub struct TerrainGBuffer;
+pub enum TerrainGBuffer {
+    Preview,
+    Lighting,
+}
 
-pub struct TerrainGBufferPlugin;
+pub struct TerrainGBufferPlugin(pub TerrainGBuffer);
 
 impl Plugin for TerrainGBufferPlugin {
     fn build(&self, app: &mut App) {
         load_internal_asset!(app, SHADER, "terrain_gbuffer.wgsl", Shader::from_wgsl);
         app.add_plugins(ExtractComponentPlugin::<TerrainGBuffer>::default());
+        if matches!(self.0, TerrainGBuffer::Lighting) {
+            app.add_plugins(lighting::TerrainLightingPlugin);
+        }
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -176,16 +183,17 @@ struct Targets {
     normal: CachedTexture,
     half: CachedTexture,
     full: CachedTexture,
-    equal: CachedTexture,
+    equal: Option<CachedTexture>,
+    lighting: Option<lighting::LightingTargets>,
 }
 
 fn prepare_targets(
     mut commands: Commands,
     mut cache: ResMut<TextureCache>,
     device: Res<RenderDevice>,
-    views: Query<(Entity, &ViewPrepassTextures), With<TerrainGBuffer>>,
+    views: Query<(Entity, &ViewPrepassTextures, &TerrainGBuffer)>,
 ) {
-    for (entity, prepass) in &views {
+    for (entity, prepass, mode) in &views {
         let full = prepass.size;
         let half = Extent3d {
             width: (full.width / 2).max(1),
@@ -213,7 +221,10 @@ fn prepare_targets(
             normal: get("terrain_gbuffer_rt3", NORMAL_FORMAT, full),
             half: get("terrain_class_half", CLASS_DEPTH, half),
             full: get("terrain_class_full", CLASS_DEPTH, full),
-            equal: get("terrain_class_equal", TextureFormat::Rg11b10Ufloat, full),
+            equal: matches!(mode, TerrainGBuffer::Preview)
+                .then(|| get("terrain_class_equal", TextureFormat::Rg11b10Ufloat, full)),
+            lighting: matches!(mode, TerrainGBuffer::Lighting)
+                .then(|| lighting::allocate_targets(half, get)),
         });
     }
 }
@@ -241,6 +252,36 @@ fn depth(view: &TextureView, load: LoadOp<f32>) -> Option<RenderPassDepthStencil
     })
 }
 
+fn class_group(
+    cache: &PipelineCache,
+    device: &RenderDevice,
+    stages: &Stages,
+    out: &Targets,
+) -> BindGroup {
+    device.create_bind_group(
+        "field_class",
+        &cache.get_bind_group_layout(stages.half.layout.as_ref().unwrap()),
+        &BindGroupEntries::with_indices(((2, &out.class.default_view),)),
+    )
+}
+
+fn classify(
+    render: &mut RenderContext,
+    label: &str,
+    pipeline: &RenderPipeline,
+    group: &BindGroup,
+    target: &CachedTexture,
+) {
+    let mut pass = render.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some(label),
+        depth_stencil_attachment: depth(&target.default_view, LoadOp::Clear(0.0)),
+        ..default()
+    });
+    pass.set_render_pipeline(pipeline);
+    pass.set_bind_group(0, group, &[]);
+    pass.draw(0..3, 0..1);
+}
+
 fn draw_diagnostics(
     view: ViewQuery<(&ViewTarget, &ViewPrepassTextures, &Targets), With<TerrainGBuffer>>,
     stages: Res<Stages>,
@@ -250,6 +291,9 @@ fn draw_diagnostics(
     mut logged: Local<bool>,
 ) {
     let (target, prepass, out) = view.into_inner();
+    let Some(equal_target) = &out.equal else {
+        return;
+    };
     let [Some(half), Some(full), Some(equal), Some(preview)] =
         [&stages.half, &stages.full, &stages.equal, &stages.preview]
             .map(|stage| cache.get_render_pipeline(stage.pipeline))
@@ -264,10 +308,7 @@ fn draw_diagnostics(
             entries,
         )
     };
-    let classify_group = bind(
-        &stages.half,
-        &BindGroupEntries::with_indices(((2, &out.class.default_view),)),
-    );
+    let classify_group = class_group(&cache, &device, &stages, out);
     let preview_group = bind(
         &stages.preview,
         &BindGroupEntries::with_indices((
@@ -275,8 +316,23 @@ fn draw_diagnostics(
             (3, &out.albedo.default_view),
             (4, &out.normal.default_view),
             (5, &out.half.default_view),
-            (6, &out.equal.default_view),
+            (6, &equal_target.default_view),
         )),
+    );
+
+    classify(
+        &mut render,
+        "terrain class half",
+        half,
+        &classify_group,
+        &out.half,
+    );
+    classify(
+        &mut render,
+        "terrain class full",
+        full,
+        &classify_group,
+        &out.full,
     );
 
     let mut draw = |label,
@@ -299,27 +355,11 @@ fn draw_diagnostics(
         }
         pass.draw(0..3, instances);
     };
-    draw(
-        "terrain class half",
-        half,
-        &[],
-        depth(&out.half.default_view, LoadOp::Clear(0.0)),
-        Some(&classify_group),
-        0..1,
-    );
-    draw(
-        "terrain class full",
-        full,
-        &[],
-        depth(&out.full.default_view, LoadOp::Clear(0.0)),
-        Some(&classify_group),
-        0..1,
-    );
     let class = u32::from(FIELD_CLASS);
     draw(
         "terrain class Equal",
         equal,
-        &[color(&out.equal.default_view)],
+        &[color(&equal_target.default_view)],
         depth(&out.full.default_view, LoadOp::Load),
         None,
         class..class + 1,

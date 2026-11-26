@@ -48,16 +48,50 @@ The reference path for lighting is the same-view forward capture above.
 The Wii U capture is the reference for pass order, formats, and lighting
 behavior.
 
-For the next comparison, reuse the current field lighting in
-`deferred_light.wgsl` before fitting lighting parameters. In EID 11019,
-RT4 receives the mean of the three encoded normal channels. In EID 12855,
-the full-resolution shader gathers four half-resolution depth samples and
-four R8 guide samples and compares the guide against the same mean computed
-from the full-resolution normal. Preserve that scalar guide when moving
-field lighting into the half-resolution pass and composing it into HDR.
-Compare the result against the forward field at the same camera and time,
-and inspect the half-resolution outputs and the composition against the
-Wii U reference.
+## Experimental terrain lighting
+
+Capture both modes with the same Hateno preset, time and weather:
+
+    cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesky --screenshot captures/terrain-forward.png
+    cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesky --terrain-deferred --screenshot captures/terrain-deferred.png
+
+After the geometry pass, the D16 half-resolution classification selects
+field pixels for pre-shading. It computes shadow (sun and cloud attenuation,
+wetness, fog transmission and sky visibility), fog inscattering and diffuse
+ambient light from the shared field and haze formulas. The half-resolution
+normal guide is the mean of the three encoded normal channels, as observed
+in EID 11019. Composition uses full-resolution D16 Equal testing and the
+full-resolution albedo, gloss and normal for the direct light, reflection and
+the rest of the field shading. It writes into the view's HDR color before
+transparent draws and post-processing.
+
+**SI-GBUF-03**. The host tracks linear view depth in metres in an R32F
+texture written with pre-shading. Depth and surface position are reconstructed
+from Bevy's depth prepass. The mapped G-buffer normal also biases Bevy's
+directional shadow query. The regular forward terrain runs before composition
+as a fallback while custom resources are loading, so the experiment's
+total terrain cost includes the regular opaque draw. The host HDR attachment
+is Bevy's RGBA16F. Slot 3 of half-resolution pre-shading, the second shared
+lighting layer used by water, is pending.
+
+**SI-GBUF-04**. EID 12855 gathers four half-resolution depths and four
+R8 normal guide samples before adjusting its sample coordinate. The
+experiment ranks the same four neighbors by relative view depth and encoded
+normal difference, selecting one valid terrain texel. If none belongs to
+the field, it recomputes the terms for that pixel at full resolution.
+
+Use the same Vulkan frame for numerical comparisons. Read HDR after
+`terrain class full` and again after `field HDR composition`. The earlier
+value already includes forward terrain. The D16 classification identifies
+the field pixels for the comparison. Separate screenshots fix the sun and
+weather, while cloud shadows still advance with the runtime clock.
+
+In the 1600×900 Hateno Vulkan verification frame, pre-shading ran at EID
+45245 and HDR composition at EID 45270. Comparing the HDR attachment at
+45256 and 45270 over the 778,282 class-4 pixels gave a mean absolute
+difference of 0.0118 per linear RGB channel before tone mapping. The
+95th-percentile maximum channel difference per pixel was 0.0430.
+These are forward-versus-deferred values from the renderer.
 
 ## Question and sources
 

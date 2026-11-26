@@ -83,6 +83,7 @@ usage: render [options]
   --occlusion-culling  skip meshes hidden behind opaque geometry (experimental)
   --profile        log frame/pass timings and scene counts every 10 seconds
   --terrain-gbuffer  show the experimental terrain G-buffer and class depths
+  --terrain-deferred  shade the main view's terrain through the experimental G-buffer
   --screenshot <png>  once the world has loaded, save a frame and exit
   --character <name>  stand a baked character (characters/<name>.ron, e.g.
                    link) on the ground where the start camera looks,
@@ -115,7 +116,7 @@ struct Args {
     no_vsync: bool,
     occlusion_culling: bool,
     profile: bool,
-    terrain_gbuffer: bool,
+    terrain_gbuffer: Option<terrain_gbuffer::TerrainGBuffer>,
     screenshot: Option<PathBuf>,
     /// A character to stand where the camera looks, and its clip.
     character: Option<String>,
@@ -134,7 +135,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         no_vsync: false,
         occlusion_culling: false,
         profile: false,
-        terrain_gbuffer: false,
+        terrain_gbuffer: None,
         screenshot: None,
         character: None,
         clip: "Nml_Wait".into(),
@@ -170,7 +171,8 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--no-vsync" => args.no_vsync = true,
             "--occlusion-culling" => args.occlusion_culling = true,
             "--profile" => args.profile = true,
-            "--terrain-gbuffer" => args.terrain_gbuffer = true,
+            "--terrain-gbuffer" => args.terrain_gbuffer = Some(terrain_gbuffer::TerrainGBuffer::Preview),
+            "--terrain-deferred" => args.terrain_gbuffer = Some(terrain_gbuffer::TerrainGBuffer::Lighting),
             "--screenshot" => args.screenshot = Some(value()?.into()),
             "--character" => args.character = Some(value()?),
             "--clip" => args.clip = value()?,
@@ -405,8 +407,8 @@ fn main() -> AppExit {
                 setup_scene(commands, media, start, args.occlusion_culling, args.terrain_gbuffer)
             },
         );
-    if args.terrain_gbuffer {
-        app.add_plugins(terrain_gbuffer::TerrainGBufferPlugin);
+    if let Some(mode) = args.terrain_gbuffer {
+        app.add_plugins(terrain_gbuffer::TerrainGBufferPlugin(mode));
     }
     app.add_plugins(CameraPlugin);
     if args.screenshot.is_none() {
@@ -450,7 +452,7 @@ fn setup_scene(
     mut media: ResMut<Assets<ScatteringMedium>>,
     (transform, fly): (Transform, FlyCamera),
     occlusion_culling: bool,
-    terrain_gbuffer: bool,
+    terrain_gbuffer: Option<terrain_gbuffer::TerrainGBuffer>,
 ) {
     // A physically based sky: the atmosphere draws the sky and lights the
     // scene through an environment map. Its own haze over the terrain (the
@@ -492,8 +494,8 @@ fn setup_scene(
         // under it.
         DepthPrepass,
     ));
-    if terrain_gbuffer {
-        camera.insert(terrain_gbuffer::TerrainGBuffer);
+    if let Some(mode) = terrain_gbuffer {
+        camera.insert(mode);
     }
     if occlusion_culling {
         camera.insert(OcclusionCulling);
