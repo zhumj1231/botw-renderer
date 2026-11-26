@@ -9,6 +9,9 @@ preview character animations in the debug menu.
 Hateno is the main verified region. Rendering fidelity, effects and NPC assembly
 remain incomplete.
 
+See the [research handoff](HANDOFF.md) for the experimental terrain deferred
+path, its Vulkan validation, and the next work on this branch.
+
 ## Quick start: bake the whole main map
 
 Install Rust, a C/C++ toolchain and GPU drivers supported by Bevy/wgpu. Use
@@ -207,7 +210,7 @@ Each `game_dirs` entry can point to the dump directory (`base/`), `content/` its
 
 - Rust and Cargo. The current verification uses **Rust 1.98.1**, edition 2024. Dependencies are pinned in `Cargo.lock`, including Bevy 0.19.1. A minimum Rust version has not been established separately.
 - A system C/C++ toolchain and linker. On macOS, install Xcode Command Line Tools (`xcode-select --install`).
-- A GPU and drivers supported by Bevy/wgpu, plus a graphical session. The main verified platform is macOS / Apple GPU. Linux and Windows have not been separately verified.
+- A GPU and drivers supported by Bevy/wgpu, plus a graphical session. The main integration baseline is macOS / Apple GPU. The Hateno terrain diagnostic and experimental lighting have also been verified on Windows / Vulkan.
 - Disk space for the dump, Rust build and prepared assets.
 
 ## Verification and troubleshooting
