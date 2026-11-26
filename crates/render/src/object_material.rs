@@ -67,11 +67,10 @@ impl Plugin for ObjectMaterialPlugin {
 #[derive(Resource, Clone)]
 pub struct HandOffMask(pub Handle<Image>);
 
-/// Bindless like `StandardMaterial`, so objects with different materials
-/// still batch.
+/// Use individual texture bindings until Naga can pass bindless textures to
+/// shader functions without generating invalid SPIR-V.
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
-#[data(100, ObjectParams, binding_array(110))]
-#[bindless(index_table(range(100..109), binding(109)))]
+#[data(100, ObjectParams)]
 pub struct ObjectShading {
     pub clouds: CloudParams,
     /// The cloud shadow's texture (see `clouds.rs`).
