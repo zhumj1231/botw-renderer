@@ -1,22 +1,27 @@
-//! First scene-backed check of the field G-buffer and class-depth passes.
+//! Field G-buffer attachments, class-depth passes and diagnostic display.
+mod geometry;
 use bevy::asset::{load_internal_asset, uuid_handle};
 use bevy::core_pipeline::FullscreenShader;
-use bevy::core_pipeline::core_3d::main_transparent_pass_3d;
+use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d};
 use bevy::core_pipeline::prepass::ViewPrepassTextures;
 use bevy::core_pipeline::schedule::{Core3d, Core3dSystems};
 use bevy::prelude::*;
+use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::render::render_resource::binding_types::{texture_2d, texture_depth_2d};
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
 use bevy::render::texture::{CachedTexture, TextureCache};
 use bevy::render::view::ViewTarget;
-use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
+use bevy::render::{ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 
 const SHADER: Handle<Shader> = uuid_handle!("11c705a1-1393-44f5-a5d1-b2992d663941");
 pub const FIELD_CLASS: u8 = 4;
 const CLASS_DEPTH: TextureFormat = TextureFormat::Depth16Unorm;
+const CLASS_FORMAT: TextureFormat = TextureFormat::Rg8Unorm;
+const ALBEDO_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
+const NORMAL_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 
-#[derive(Resource)]
+#[derive(Component, Clone, Copy, ExtractComponent)]
 pub struct TerrainGBuffer;
 
 pub struct TerrainGBufferPlugin;
@@ -24,20 +29,26 @@ pub struct TerrainGBufferPlugin;
 impl Plugin for TerrainGBufferPlugin {
     fn build(&self, app: &mut App) {
         load_internal_asset!(app, SHADER, "terrain_gbuffer.wgsl", Shader::from_wgsl);
-        app.insert_resource(TerrainGBuffer);
+        app.add_plugins(ExtractComponentPlugin::<TerrainGBuffer>::default());
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
         render_app
-            .add_systems(RenderStartup, init_pipelines)
+            .init_resource::<geometry::TerrainMeshes>()
+            .add_systems(ExtractSchedule, geometry::extract_meshes)
+            .add_systems(RenderStartup, (init_pipelines, geometry::init_geometry))
             .add_systems(
                 Render,
                 prepare_targets.in_set(RenderSystems::PrepareResources),
             )
             .add_systems(
                 Core3d,
-                draw_diagnostics
-                    .after(main_transparent_pass_3d)
+                (
+                    geometry::draw_geometry
+                        .after(Core3dSystems::Prepass)
+                        .before(main_opaque_pass_3d),
+                    draw_diagnostics.after(main_transparent_pass_3d),
+                )
                     .in_set(Core3dSystems::MainPass),
             );
     }
@@ -50,7 +61,6 @@ struct Stage {
 
 #[derive(Resource)]
 struct Stages {
-    unpack: Stage,
     half: Stage,
     full: Stage,
     equal: Stage,
@@ -72,16 +82,6 @@ fn init_pipelines(
 ) {
     let float = || texture_2d(TextureSampleType::Float { filterable: false });
     let fragment = ShaderStages::FRAGMENT;
-    let unpack = BindGroupLayoutDescriptor::new(
-        "terrain_gbuffer_source",
-        &BindGroupLayoutEntries::sequential(
-            fragment,
-            (
-                texture_2d(TextureSampleType::Uint),
-                texture_2d(TextureSampleType::Uint),
-            ),
-        ),
-    );
     let classify = BindGroupLayoutDescriptor::new(
         "terrain_gbuffer_class",
         &BindGroupLayoutEntries::with_indices(fragment, ((2, float()),)),
@@ -138,18 +138,6 @@ fn init_pipelines(
         })
     };
     commands.insert_resource(Stages {
-        unpack: queue(
-            "unpack_terrain",
-            Some(unpack),
-            vec![
-                target(TextureFormat::Rg8Unorm),
-                target(TextureFormat::Rgba8UnormSrgb),
-                None,
-                target(TextureFormat::Rgba8Unorm),
-            ],
-            None,
-            false,
-        ),
         half: queue(
             "classify_half",
             Some(classify.clone()),
@@ -195,12 +183,9 @@ fn prepare_targets(
     mut commands: Commands,
     mut cache: ResMut<TextureCache>,
     device: Res<RenderDevice>,
-    views: Query<(Entity, &ViewPrepassTextures)>,
+    views: Query<(Entity, &ViewPrepassTextures), With<TerrainGBuffer>>,
 ) {
     for (entity, prepass) in &views {
-        if prepass.deferred.is_none() {
-            continue;
-        }
         let full = prepass.size;
         let half = Extent3d {
             width: (full.width / 2).max(1),
@@ -223,9 +208,9 @@ fn prepare_targets(
             )
         };
         commands.entity(entity).insert(Targets {
-            class: get("terrain_gbuffer_rt0", TextureFormat::Rg8Unorm, full),
-            albedo: get("terrain_gbuffer_rt1", TextureFormat::Rgba8UnormSrgb, full),
-            normal: get("terrain_gbuffer_rt3", TextureFormat::Rgba8Unorm, full),
+            class: get("terrain_gbuffer_rt0", CLASS_FORMAT, full),
+            albedo: get("terrain_gbuffer_rt1", ALBEDO_FORMAT, full),
+            normal: get("terrain_gbuffer_rt3", NORMAL_FORMAT, full),
             half: get("terrain_class_half", CLASS_DEPTH, half),
             full: get("terrain_class_full", CLASS_DEPTH, full),
             equal: get("terrain_class_equal", TextureFormat::Rg11b10Ufloat, full),
@@ -257,7 +242,7 @@ fn depth(view: &TextureView, load: LoadOp<f32>) -> Option<RenderPassDepthStencil
 }
 
 fn draw_diagnostics(
-    view: ViewQuery<(&ViewTarget, &ViewPrepassTextures, &Targets)>,
+    view: ViewQuery<(&ViewTarget, &ViewPrepassTextures, &Targets), With<TerrainGBuffer>>,
     stages: Res<Stages>,
     cache: Res<PipelineCache>,
     device: Res<RenderDevice>,
@@ -265,24 +250,9 @@ fn draw_diagnostics(
     mut logged: Local<bool>,
 ) {
     let (target, prepass, out) = view.into_inner();
-    let (Some(packed), Some(ids)) = (prepass.deferred_view(), &prepass.deferred_lighting_pass_id)
-    else {
-        return;
-    };
-    let [
-        Some(unpack),
-        Some(half),
-        Some(full),
-        Some(equal),
-        Some(preview),
-    ] = [
-        &stages.unpack,
-        &stages.half,
-        &stages.full,
-        &stages.equal,
-        &stages.preview,
-    ]
-    .map(|stage| cache.get_render_pipeline(stage.pipeline))
+    let [Some(half), Some(full), Some(equal), Some(preview)] =
+        [&stages.half, &stages.full, &stages.equal, &stages.preview]
+            .map(|stage| cache.get_render_pipeline(stage.pipeline))
     else {
         return;
     };
@@ -294,10 +264,6 @@ fn draw_diagnostics(
             entries,
         )
     };
-    let unpack_group = bind(
-        &stages.unpack,
-        &BindGroupEntries::sequential((packed, &ids.texture.default_view)),
-    );
     let classify_group = bind(
         &stages.half,
         &BindGroupEntries::with_indices(((2, &out.class.default_view),)),
@@ -333,19 +299,6 @@ fn draw_diagnostics(
         }
         pass.draw(0..3, instances);
     };
-    draw(
-        "terrain G-buffer unpack",
-        unpack,
-        &[
-            color(&out.class.default_view),
-            color(&out.albedo.default_view),
-            None,
-            color(&out.normal.default_view),
-        ],
-        None,
-        Some(&unpack_group),
-        0..1,
-    );
     draw(
         "terrain class half",
         half,

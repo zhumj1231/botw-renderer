@@ -148,7 +148,6 @@ fn finish_loads(
     look_texture: Option<Res<LookTexture>>,
     ssao_noise: Option<Res<SsaoNoise>>,
     cube_mean: Option<Res<CubeMean>>,
-    gbuffer: Option<Res<crate::terrain_gbuffer::TerrainGBuffer>>,
     settings: Res<TerrainSettings>,
     mut stats: ResMut<TerrainStats>,
 ) {
@@ -177,7 +176,11 @@ fn finish_loads(
                         };
                         Some(
                             terrain_materials.add(TerrainMaterial {
-                                base: terrain_material::base_material(gbuffer.is_some()),
+                                base: StandardMaterial {
+                                    perceptual_roughness: 1.0,
+                                    reflectance: 0.1,
+                                    ..default()
+                                },
                                 extension: TerrainExtension {
                                     albedo: albedo.clone(),
                                     mate,
@@ -214,7 +217,11 @@ fn finish_loads(
                 let plain = || {
                     let (albedo, normals, table) = terrain_material::plain_textures(&mut images);
                     terrain_materials.add(TerrainMaterial {
-                        base: terrain_material::base_material(gbuffer.is_some()),
+                        base: StandardMaterial {
+                            perceptual_roughness: 1.0,
+                            reflectance: 0.1,
+                            ..default()
+                        },
                         extension: TerrainExtension {
                             albedo,
                             mate: images.add(terrain_material::blank_mate()),

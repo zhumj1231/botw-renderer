@@ -51,7 +51,7 @@ use std::sync::Arc;
 
 use asset_format::Places;
 use bevy::camera::{Exposure, Hdr};
-use bevy::core_pipeline::prepass::{DeferredPrepass, DepthPrepass};
+use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::light::{Atmosphere, AtmosphereEnvironmentMapLight};
@@ -493,7 +493,7 @@ fn setup_scene(
         DepthPrepass,
     ));
     if terrain_gbuffer {
-        camera.insert(DeferredPrepass);
+        camera.insert(terrain_gbuffer::TerrainGBuffer);
     }
     if occlusion_culling {
         camera.insert(OcclusionCulling);

@@ -8,27 +8,21 @@
 // slopes so cliffs do not smear. The light is the game's deferred shading of
 // the field (`botw::deferred_light`, docs/research/wiiu-field-shading.md).
 
-#import bevy_pbr::{
-    pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::alpha_discard,
-    mesh_view_bindings::{globals, view},
-}
-#import botw::clouds::{CloudParams, cloud_shadow}
-#import botw::look::{read_look_at, apply_haze, sky_cover, field_wetness_at}
-
-#ifdef PREPASS_PIPELINE
-#import bevy_pbr::{
-    prepass_io::{VertexOutput, FragmentOutput},
-    pbr_deferred_functions::deferred_output,
-}
+#ifdef BOTW_TERRAIN_GBUFFER
+#import bevy_render::view::View
+@group(0) @binding(0) var<uniform> view: View;
 #else
 #import bevy_pbr::{
+    pbr_fragment::pbr_input_from_standard_material,
+    pbr_functions::{alpha_discard, main_pass_post_lighting_processing},
+    mesh_view_bindings::view,
     forward_io::{VertexOutput, FragmentOutput},
-    pbr_functions::main_pass_post_lighting_processing,
     view_transformations::{position_world_to_view, frag_coord_to_uv},
 }
+#import botw::look::{read_look_at, apply_haze, sky_cover, field_wetness_at}
 #import botw::deferred_light::{FieldSurface, field_color, game_frame, ssao}
 #endif
+#import botw::clouds::{CloudParams, cloud_shadow}
 
 struct MaterialTable {
     // Per material index: u scale, v scale, texture layer, unused.
@@ -123,15 +117,14 @@ fn terrain_surface(world: vec3<f32>, p: Projection) -> Surface {
     return mix_surface(mix_surface(c00, c10, f.x), mix_surface(c01, c11, f.x), f.y);
 }
 
-@fragment
-fn fragment(
-    in: VertexOutput,
-    @builtin(front_facing) is_front: bool,
-) -> FragmentOutput {
-    var pbr_input = pbr_input_from_standard_material(in, is_front);
+struct SampledTerrain {
+    albedo: vec3<f32>,
+    normal: vec3<f32>,
+    gloss: f32,
+}
 
-    let world = in.world_position.xyz;
-    let normal = normalize(in.world_normal);
+fn sample_terrain(world: vec3<f32>, world_normal: vec3<f32>, vertex_color: vec3<f32>) -> SampledTerrain {
+    let normal = normalize(world_normal);
     // Derivatives must be taken in uniform control flow, before any branch.
     let top_uv = world.xz;
     let facing_z = abs(normal.z) > abs(normal.x);
@@ -154,17 +147,64 @@ fn fragment(
     }
 #ifdef VERTEX_COLORS
     if tile.w > 0.5 {
-        albedo = in.color.rgb;
+        albedo = vertex_color;
     }
 #endif
-    pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
-    pbr_input.N = n;
+    return SampledTerrain(albedo, n, gloss);
+}
+
+#ifdef BOTW_TERRAIN_GBUFFER
+struct FieldVertex {
+    @builtin(position) position: vec4<f32>,
+    @location(0) world: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec3<f32>,
+};
+
+@vertex
+fn gbuffer_vertex(
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+    @location(3) translation: vec3<f32>,
+) -> FieldVertex {
+    let world = position + translation;
+    return FieldVertex(view.clip_from_world * vec4(world, 1.0), world, normalize(normal), color.rgb);
+}
+
+struct FieldGBuffer {
+    @location(0) classification: vec2<f32>,
+    @location(1) albedo: vec4<f32>,
+    @location(3) normal: vec4<f32>,
+};
+
+@fragment
+fn gbuffer_fragment(in: FieldVertex) -> FieldGBuffer {
+    let field = sample_terrain(in.world, in.normal, in.color);
+    let gloss = floor(clamp(field.gloss, 0.0, 1.0) * 63.75);
+    return FieldGBuffer(
+        vec2(f32(#{BOTW_FIELD_CLASS}) / 255.0, 0.0),
+        vec4(field.albedo, 0.0),
+        vec4(field.normal * 0.5 + vec3(0.5), (gloss * 4.0 + 1.0) / 255.0),
+    );
+}
+#else
+@fragment
+fn fragment(
+    in: VertexOutput,
+    @builtin(front_facing) is_front: bool,
+) -> FragmentOutput {
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    let world = in.world_position.xyz;
+    var vertex_color = vec3(1.0);
+#ifdef VERTEX_COLORS
+    vertex_color = in.color.rgb;
+#endif
+    let sampled = sample_terrain(world, in.world_normal, vertex_color);
+    pbr_input.material.base_color = vec4<f32>(sampled.albedo, 1.0);
+    pbr_input.N = sampled.normal;
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
 
-#ifdef PREPASS_PIPELINE
-    pbr_input.material.perceptual_roughness = 1.0 - clamp(gloss, 0.0, 1.0);
-    let out = deferred_output(in, pbr_input);
-#else
     var out: FragmentOutput;
     let look = read_look_at(look_texture, world);
     // SI-LGT-21: terrain gloss without floor(63.75 * gl).
@@ -172,9 +212,9 @@ fn fragment(
     // (ambient occlusion and rim light on). Its gloss from `MaterialCmb`'s
     // blue goes through a formula not read; taken as it is.
     var surface: FieldSurface;
-    surface.albedo = albedo;
-    surface.N = n;
-    surface.gloss = gloss;
+    surface.albedo = sampled.albedo;
+    surface.N = sampled.normal;
+    surface.gloss = sampled.gloss;
     surface.metal = 0.0;
     surface.flag = 1.0;
     let frame = game_frame(position_world_to_view(world), frag_coord_to_uv(in.position.xy));
@@ -192,6 +232,6 @@ fn fragment(
     // The air between the camera and the ground.
     lit = apply_haze(look, lit, world, normalize(world - view.world_position));
     out.color = main_pass_post_lighting_processing(pbr_input, vec4<f32>(lit, 1.0));
-#endif
     return out;
 }
+#endif

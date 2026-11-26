@@ -17,34 +17,47 @@ outside source control.
 | Full material classes | 12831 | Separate D16 at 1280×720, using mask 0x0f |
 | Material composition | 12855–12894 | Full-resolution Equal draws, HDR R11G11B10F, depth/normal-guided half-resolution reads |
 
-The terrain diagnostic is opt-in. It takes the view's actual terrain
-material outputs, prepares RT0/RT1/RT3, resolves D16 classes independently
-at both resolutions, and draws the field class (4) with a full-resolution
-Equal test. The mosaic shows albedo, encoded normal, half-resolution class
-coverage, and full-resolution Equal coverage in reading order. This diagnostic
-does not run the five-output pre-shading or replace the normal lighting.
+The opt-in terrain geometry pass writes RT0/RT1/RT3 directly from the
+visible terrain meshes, using the same material sampling code as forward
+terrain. Both D16 class targets are generated independently, and the field
+class (4) is drawn with a full-resolution Equal test. The mosaic shows
+albedo, encoded normal, half-resolution class coverage, and full-resolution
+Equal coverage in reading order.
 
-Run against existing Hateno assets:
+Use the Hateno preset, the same baked assets, and a fixed time for comparison.
+The first command captures the current forward lighting. The second captures
+the G-buffer diagnostic.
 
-    cargo render --assets assets-hateno --place hateno --terrain-gbuffer
-    cargo render --assets assets-hateno --place hateno --terrain-gbuffer --screenshot captures/terrain-gbuffer.png
+    cargo render --assets assets-hateno --place hateno --time 10:00 --screenshot captures/terrain-forward.png
+    cargo render --assets assets-hateno --place hateno --time 10:00 --terrain-gbuffer --screenshot captures/terrain-gbuffer.png
 
-**SI-GBUF-01**: for this diagnostic, Bevy's deferred prepass transports
-the terrain albedo, octahedral normal and roughness to the native-format
-targets via a fullscreen unpack. Albedo and normal therefore go through
-Bevy quantization. This extra transport and duplicate storage are temporary.
-The diagnostic uses the existing camera depth and only wires the field's
-class. Other materials, the capture cube's view, and the final material
-blend still need their native paths in a deferred implementation. By
-default the viewer continues using its forward terrain shader and its
-existing cube cameras.
+**SI-GBUF-02**. The diagnostic borrows Bevy's reverse-Z scene depth as a
+read-only attachment after the depth prepass. The ordinary forward terrain
+still draws in the experimental view, so a timing of this mode includes
+both terrain draws. The diagnostic covers the field class. Other materials
+and the capture cube keep their existing render paths. The new path
+stops at classification coverage and does not composite lighting into HDR.
 
-Next, make the field materials write RT0/RT1/RT3 directly. Then move the
-recovered terrain pre-shading and guided reconstruction into dedicated
-passes, using the existing field lighting equations, sky and cloud-shadow inputs and
-post-processing. Extend the class table to vegetation and characters once
-the field works end to end. Add the translucent G-buffer path and special
-HDR writes after reproducing the opaque composition.
+The previous diagnostic at `eea697d` used Bevy's packed
+`RGBA32Uint` transport and a fullscreen unpack (SI-GBUF-01).
+On Vulkan at 1600×900, comparing all 360,000 pixels in each Hateno mosaic
+panel gave 100% overlap (IoU) for both thresholded coverage masks. The mean
+absolute difference per displayed 8-bit color channel was 0.124 for albedo
+and 0.011 for encoded normals. These measurements compare diagnostic PNGs.
+The reference path for lighting is the same-view forward capture above.
+The Wii U capture is the reference for pass order, formats, and lighting
+behavior.
+
+For the next comparison, reuse the current field lighting in
+`deferred_light.wgsl` before fitting lighting parameters. In EID 11019,
+RT4 receives the mean of the three encoded normal channels. In EID 12855,
+the full-resolution shader gathers four half-resolution depth samples and
+four R8 guide samples and compares the guide against the same mean computed
+from the full-resolution normal. Preserve that scalar guide when moving
+field lighting into the half-resolution pass and composing it into HDR.
+Compare the result against the forward field at the same camera and time,
+and inspect the half-resolution outputs and the composition against the
+Wii U reference.
 
 ## Question and sources
 
