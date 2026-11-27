@@ -124,3 +124,36 @@ preserve native aliases, starting with tone-map PS 547 and the observed
 terrain-water candidates. Investigate unmatched files and absent target
 programs before requesting targeted scenarios. Continue CPU uniform tracing;
 no extraction rerun or further broad user tour is needed.
+
+## Windows Target Control without keyboard input
+
+Verified with RenderDoc 1.38 and Cemu 1.26.2f on Vulkan. Launch Cemu
+under `renderdoccmd capture` and let it reach a presenting screen.
+The helper selects the local control connection by the Cemu process
+ID, waits for Vulkan, calls `TriggerCapture(1)` and receives
+`NewCapture`. It opens the resulting file for replay and records
+the number of draws, present events and backbuffer format. Use the
+embedded Python from the same RenderDoc installation.
+
+```powershell
+$env:BOTW_TC_PID = [string](Get-Process -Name Cemu -ErrorAction Stop).Id
+$env:BOTW_TC_REPORT = Join-Path $env:TEMP 'botw-target-control.json'
+$env:BOTW_TC_REQUIRE_BACKGROUND = '1'
+$script = (Resolve-Path .\tools\research\renderdoc_target_control.py).Path
+$qrenderdoc = 'C:\Program Files\RenderDoc\qrenderdoc.exe'
+Start-Process -FilePath $qrenderdoc -ArgumentList ('--python="' + $script + '"') -WindowStyle Hidden -Wait
+Get-Content -LiteralPath $env:BOTW_TC_REPORT
+```
+
+The example assumes exactly one Cemu process. Use a new report path
+per run. Set `BOTW_TC_REQUIRE_BACKGROUND` for a background test or
+remove the variable to trigger immediately. Cemu needs to keep presenting
+for a capture to occur. No window activation or synthetic keyboard
+input is used. The helper leaves other Target Control clients connected
+and reports an error if it cannot connect to the selected PID.
+
+Two live tests saved frames 77229 and 78333, both of which replayed.
+The second test kept another window in the foreground throughout the
+capture checks. It produced 4,126 draw calls and one Present at
+1280×720. Raw capture and report files are kept locally.
+[RenderDoc Target Control example](https://github.com/baldurk/renderdoc/blob/v1.x/docs/python_api/examples/renderdoc/remote_capture.rst)
