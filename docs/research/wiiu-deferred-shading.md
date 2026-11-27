@@ -125,7 +125,9 @@ The D16 classification identifies the field pixels for comparisons.
 Use `--freeze-animation` for renderer A/B screenshots. It leaves the
 scene clock at startup while asset loading and capture still advance.
 At 1280×720, two separate Hateno captures with the same camera, time and
-weather produced byte-identical PNGs with this option.
+weather produced byte-identical PNGs with this option. The sky medium
+and cloud-shadow updates use real time to finish applying the loaded
+environment, so they can settle even while animation stays frozen.
 
 The terrain and foliage composition shaders scale the direct specular
 term by `uking_dynamic_cloud_ratio`. In JP v208 `uking_sys_shading` PS 32,

@@ -1229,7 +1229,8 @@ pub struct SkyState<'w, 's> {
 /// game's cloud colours.
 #[allow(clippy::too_many_arguments)]
 pub fn update_clouds(
-    real: Res<Time>,
+    scene_time: Res<Time>,
+    real: Res<Time<Real>>,
     mut last_share: Local<f32>,
     (mut wind, mut scroll, mut sway): (
         Local<SkyWind>,
@@ -1297,7 +1298,7 @@ pub fn update_clouds(
     };
     let hours = time.as_ref().map_or(12.0, |t| t.hours);
     let table = sky_lut.is_some_and(|lut| lut.0.is_some());
-    let frames = real.delta_secs() * 30.0;
+    let frames = scene_time.delta_secs() * 30.0;
     // The world's wind; without its manager none (the game's outside the
     // field).
     let world = world_wind.map_or((0.0, Vec2::Y), |w| w.world());
@@ -1310,7 +1311,7 @@ pub fn update_clouds(
     }
     spots
         .shadow
-        .advance(&wind, frames, real.elapsed_secs_wrapped());
+        .advance(&wind, frames, scene_time.elapsed_secs_wrapped());
     // `SkyMgr`'s order in a frame: the glow's factor, the layers' speeds,
     // spots and values
     // (`FUN_0365867c`; the renderer moves the textures by the speeds), then
@@ -1352,7 +1353,8 @@ pub fn update_clouds(
     now.0 = params.clone();
     // Surfaces under the clouds get the same layers once they change enough
     // (not too often: every material that shows shadows is updated), and the
-    // sun in steps for those that cannot see the lights.
+    // sun in steps for those that cannot see the lights. Sharing can still
+    // catch up while the scene clock is paused for capture.
     let now = real.elapsed_secs();
     let differs = params.layers_differ(&shadows.params) || params.shadow_differs(&shadows.params);
     if differs && (now - *last_share >= SHARE_INTERVAL) {

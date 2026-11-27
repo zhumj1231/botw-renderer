@@ -1133,7 +1133,7 @@ impl SkyMedium {
 /// redoes its lookup tables on the CPU and the GPU, so only now and then.
 #[allow(clippy::too_many_arguments)]
 fn scatter_like_the_game(
-    real: Res<Time>,
+    real: Res<Time<Real>>,
     sky: Res<Sky>,
     environment: Res<Environment>,
     atmospheres: Query<&bevy::light::Atmosphere>,
