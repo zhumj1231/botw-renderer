@@ -165,7 +165,7 @@ path while a row is open.
 | Topic | Capture | Question the capture can answer | Complete without a new capture? Evidence and blocker |
 | --- | --- | --- | --- |
 | Real-time shadows | Hateno clear daylight | Read the drawn cascade count and depth map dimensions, the first two splits in `gsys_context[58].xy` and the current range from `gsys_environment[53].z + 20`. Cross-check against `[53].w + 40`. Read `gsys_environment[42].rgb` and compare it to the clock-derived weights, then inspect Expand red on the distant slope. | **Complete for stock JP v208 Main terrain, as static research.** The traced main-view state leaves the history-based range guard off, while the scene preset and runtime offsets still determine the splits and fade starts. The field shader's cascade sampling and baked far-shadow blend are traced. The independent renderer still uses Bevy cascade maps and configured distances. [Field shadows](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
-| SSAO | Hateno clear, with a rock or trunk in contact with the ground and nearby open ground | Verify the live depth, noise and final lighting sampler bindings. Compare Expand blue and the reconstructed ambient light at the contact, across the silhouette and on open ground. | **Complete for stock JP v208 MainField SSAO and the scene-profile selection in the audited transitions.** The field kernel, late translucent ordering, default reconstruction sampler and Main/UI selection are traced. Ordinary indoor volumes keep Main. The shrine environment and in-engine demo data examined contain no SSAO profile override. The independent field path shares half-resolution lighting and reconstruction across ground and field objects. [SSAO scene configuration](#ssao-scene-configuration) |
+| SSAO | Hateno clear, with a rock or trunk in contact with the ground and nearby open ground | Verify the live depth, noise and final lighting sampler bindings. Compare Expand blue and the reconstructed ambient light at the contact, across the silhouette and on open ground. | **Complete for stock JP v208 MainField SSAO and the scene-profile selection in the audited transitions.** Expand AO is traced from field depth and material selection through reconstruction. The shipped Main and UI profiles both disable creation of the separate AGL SSAO object. The graphics initialization loads these profiles. The audited indoor, shrine and event paths supply no replacement profile. [SSAO scene configuration](#ssao-scene-configuration) |
 | Indirect light | Hateno clear, cloudy, and clear at night, with nearby foliage and the character visible | Read Expand red on terrain, foliage and the character. Check the first reduction's input and output sizes, and read the final exposure and analyzer texels. | **Open.** The crop, light and weather coefficients, and the native rules for background, foliage and character coverage are traced. Near foliage and character coverage now pass independent GPU readback. Far-tree billboards and the native per-material shadow sampling still need independent implementation. [LightAnalyzer](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
 | Atmosphere and day/night | The same Hateno clear day and clear night views | Read the pre-shading fog and transmission at near and distant terrain, the main light direction and color, and the sky color before tone mapping. This gives per-view daylight and night reference values for the independent renderer. | **Complete for the JP v208 main view with the shipped atmosphere table.** The stock table load, scattering kernels and per-view palette-driven bake are traced. The independent bake passed the reference check on the decoded table. Its final brightness conversion remains fitted pending per-view values. [Sky LUT passes](wiiu-sky-resources.md#wii-u-v208-shipped-table-and-the-precompute-passes) |
 | Weather and seasons | Hateno rain and clear daylight, with exposed terrain or stone visible in both. Hebra with falling snow. | Read `rain_ratio`, the wetness value in the green channel of PreShading(Shadow), and the opaque HDR result at the same Hateno surfaces. In the Hebra frame, identify the precipitation draws and read the ground's actual material, wetness and lighting. | **Complete for stock JP v208 MainField terrain and outdoor weather, as static research.** The tile data already contains the snow material mix. Snowfall uses a separate effect path, while the deferred rain inputs decay toward dry. The traced terrain, forecast and palette paths have no independent seasonal selector. The independent forecast still approximates the cold transition. [Snow-covered terrain](weather.md#12-snow-covered-mainfield-terrain-in-jp-v208) |
@@ -325,8 +325,21 @@ The initialization loop at `0x039a7898`–`0x039a78b0` passes that same
 pointer to each registered component, including the shadow component
 at `ModelScene+0x1240`.
 
-**The settings configure the `agl::sdw::SSAO` path.** Both profiles
-set `ssao_width_scale` to 0.5 and `ssao_is_depth_full` to false.
+**Both shipped profiles leave `agl::sdw::SSAO` unallocated.** The
+feature descriptor at `0x1034db28` links the label `SSAO` to the key
+`ssocclusion`. This is index 14 in the feature table at `0x1034da48`.
+The setup loop at `0x039b5e94`–`0x039b6124` adds the `create_` prefix
+for the allocation flag. Index 14 in the allocation array at
+`ModelSceneConfig+0x6f4` puts the Boolean value at `+0x7e0`.
+The CRC32 of `create_ssocclusion` is `0xe94a0b77`. The shipped
+`Main` and `UI` entries both set that key to false. The branch at
+`0x039dd974` then skips the SSAO allocation, leaving `gsdw+0x380`
+null as initialized at `0x039dbc10`. The draw guard at `0x039e03a8`
+requires a non-null object and the separate `ssocclusion` draw flag
+at `ModelSceneConfig+0x540`.
+
+Both profiles also set `ssao_width_scale` to 0.5 and
+`ssao_is_depth_full` to false for a configuration that enables the AGL path.
 The registration at `0x039b7800` and `0x039b7848` places their values
 at `ModelSceneConfig+0x10d4` and `+0x10e4`. The consumer at
 `0x039e03d4` reads the depth flag and uses the scale for target sizing.
@@ -338,6 +351,19 @@ is computed in field PS 128 from half NLD and written to Expand blue.
 that shader. An alternate deferred material model within `Main`
 can be selected through `ItemFilter` at `0x038b315c` and `0x038b3290`.
 [Field AO](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand)
+
+**The profile application sites belong to graphics setup and lookup.**
+KSys graphics initialization at `0x03405df4` calls the routine at
+`0x03a11ef4`, which reaches the config loader via `0x03a121a8` and
+`0x03a17440`. At `0x03a17044` the loader passes the archive resource to
+the list's AAMP application function, `0x039b4704`. The other two
+direct callers reapply a stored archive resource. The one at
+`0x039b4a18` is in the list's parameter callback, and the one at
+`0x039b9ca4` is reached from the factory's name lookup. The AAMP
+application function saves the archive pointer before dispatching
+the virtual parameter reader. List lookup and component config
+assignment (`0x039b3374`) each have one direct caller. The latter
+receives the `ModelScene+0xa0` pointer during scene initialization.
 
 | Transition | JP v208 static evidence |
 | --- | --- |
@@ -351,13 +377,13 @@ It checks both `.bgmsconf` and `.gmsconf` and searches decoded `.bfevfl`
 and `.bfevtm` for `ssao`, `sceneconfig`, `gmsconf` and
 `deferredshadingmodel`, ignoring case. File counts are per content layer,
 so the same logical pack can appear in both counts. The RPX call audit
-covers direct calls and relocation references to the profile loader,
-lookup and factory. It does not resolve every indirect event callback.
-The available runtime records are insufficient to say which AO pass or
-material variant ran in a particular shrine or demo draw. These findings
-close the shipped profile-selection question for the outdoor lighting
-checklist. Replay of the actual draws can establish live bindings and
-pixel values.
+covers the loader, profile lookup, assignment and AAMP application
+sites. The typed paths that allocate and draw AGL SSAO are ruled out
+by the shipped configuration on the traced initialization path.
+The audit does not resolve every indirect event callback, so available
+runtime records remain insufficient to identify the AO material variant
+that ran in a particular shrine or demo draw. Replay of the actual
+draws can establish live bindings and pixel values.
 
 ### Half-resolution depth
 
