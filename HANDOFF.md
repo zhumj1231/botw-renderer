@@ -109,8 +109,8 @@ with the event map as a reference for matching pipeline state.
    same material boundaries.
 2. **Measure outdoor ambient and atmosphere.** The clear-day
    [LightAnalyzer readback](docs/research/wiiu-character-shading.md#clear-day-lightanalyzer-readback-in-frame-3830)
-   is verified. Read sky, fog and final display exposure from the archived frame.
-   Compare a matched clear night and a matched rainy daytime view when
+   and the [clear-day atmosphere samples](docs/research/wiiu-deferred-shading.md#clear-day-atmosphere-in-frame-3830)
+   are verified. Compare a matched clear night first and a matched rainy daytime view when
    new captures are available. Use Hebra snowfall for the precipitation
    draw and cold-region terrain.
 3. **Trace remaining material paths.** Frame 3830 establishes the
