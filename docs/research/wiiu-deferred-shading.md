@@ -68,30 +68,39 @@ transparent draws and post-processing.
 **SI-GBUF-03**. The host tracks linear view depth in metres in an R32F
 texture written with pre-shading. Depth and surface position are reconstructed
 from Bevy's depth prepass. The mapped G-buffer normal also biases Bevy's
-directional shadow query. The regular forward terrain runs before composition
-as a fallback while custom resources are loading, so the experiment's
-total terrain cost includes the regular opaque draw. The host HDR attachment
-is Bevy's RGBA16F. Slot 3 of half-resolution pre-shading, the second shared
-lighting layer used by water, is pending.
+directional shadow query. The regular forward terrain runs as a fallback
+while custom resources are loading. The host HDR attachment is Bevy's
+RGBA16F. Slot 3 of half-resolution pre-shading, the second shared lighting
+layer used by water, is pending.
 
 **SI-GBUF-04**. EID 12855 gathers four half-resolution depths and four
-R8 normal guide samples before adjusting its sample coordinate. The
-experiment ranks the same four neighbors by relative view depth and encoded
-normal difference, selecting one valid terrain texel. If none belongs to
-the field, it recomputes the terms for that pixel at full resolution.
+R8 normal guide samples before adjusting its sample coordinate. The Wii U
+JP v208 `uking_sys_shading` program 32 confirms the reconstruction in PS
+ALU groups 5–21 and the subsequent reads at that coordinate. Following
+[Cemu's FETCH4 mapping](https://github.com/cemu-project/Cemu/blob/c717fcab1ccc3e0b0b97499a4d9b04a77084e347/src/Cafe/HW/Latte/LegacyShaderDecompiler/LatteDecompilerEmitGLSL.cpp),
+the swizzled values are bottom-left, bottom-right, top-right and top-left
+in the top-down texture coordinates. Each tap's error combines four times
+the absolute encoded normal difference and a depth difference. Expressed
+in linear view metres, the depth term is `2 * abs(tap_z - z) / (z * tan(fov_y / 2))`.
+With `a = error(TL) - error(BR)` and `b = error(BL) - error(TR)`, the shader adds
+`(a + b, a - b)` to the bilinear fraction and clamps each axis to `[0, 1]`.
 
-Use the same Vulkan frame for numerical comparisons. Read HDR after
-`terrain class full` and again after `field HDR composition`. The earlier
-value already includes forward terrain. The D16 classification identifies
-the field pixels for the comparison. Separate screenshots fix the sun and
-weather, while cloud shadows still advance with the runtime clock.
+The host applies this shift and bilinearly reads shadow, fog and diffuse
+where all four terrain taps exist. The original sampler state still needs
+verification. Where the host's terrain-only pre-shading leaves holes, the
+host keeps the nearest matching valid tap or recomputes at full resolution
+if all four taps lack terrain.
 
-In the 1600×900 Hateno Vulkan verification frame, pre-shading ran at EID
-45245 and HDR composition at EID 45270. Comparing the HDR attachment at
-45256 and 45270 over the 778,282 class-4 pixels gave a mean absolute
-difference of 0.0118 per linear RGB channel before tone mapping. The
-95th-percentile maximum channel difference per pixel was 0.0430.
-These are forward-versus-deferred values from the renderer.
+The D16 classification identifies the field pixels for comparisons.
+Separate screenshots fix the sun and weather, while cloud shadows still
+advance with the runtime clock.
+
+In an earlier 1600×900 Hateno Vulkan verification frame, both terrain
+paths drew in the same frame. Comparing class-4 pixels in HDR before and
+after composition (EIDs 45256 and 45270) gave a mean absolute difference
+of 0.0118 per linear RGB channel. The 95th-percentile maximum channel
+difference per pixel was 0.0430. This comparison predates forward draw
+suppression and the reconstruction above.
 
 ## Question and sources
 

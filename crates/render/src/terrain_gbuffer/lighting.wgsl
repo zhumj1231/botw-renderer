@@ -107,47 +107,75 @@ fn preshade(in: FieldVertexOutput) -> PreShading {
     return shade_field(field_pixel(in.uv), main_light_source());
 }
 
-// SI-GBUF-04: rank the same four neighbors by depth and encoded normal.
-// Exclude cells without terrain and recompute at full resolution only if all four lack it.
-fn guide_texel(pixel: FieldPixel) -> vec2<i32> {
-    let size = vec2<i32>(textureDimensions(half_depth_guide));
-    let center = pixel.frame.uv * vec2<f32>(size) - 0.5;
-    let base = vec2<i32>(floor(center));
+fn reconstruction_weights(pixel: FieldPixel, center: vec2<f32>, taps: array<vec2<i32>, 4>) -> vec4<f32> {
     let z = -pixel.frame.p.z;
-    var best = vec2(-1);
-    var score = 1e10;
-    var distance = 1e10;
+    var depth: vec4<f32>;
+    var normal: vec4<f32>;
     for (var i = 0u; i < 4u; i += 1u) {
-        let at = clamp(base + vec2<i32>(vec2(i & 1u, i >> 1u)), vec2(0), size - 1);
-        let depth = textureLoad(half_depth_guide, at, 0).r;
-        if depth == 0.0 {
+        depth[i] = textureLoad(half_depth_guide, taps[i], 0).r;
+        normal[i] = textureLoad(half_normal_guide, taps[i], 0).r;
+    }
+    let valid = depth > vec4(0.0);
+    let normal_cost = 4.0 * abs(normal - pixel.normal_guide);
+    let depth_error = abs(depth - z);
+
+    if all(valid) {
+        // SI-GBUF-04: the Wii U shader compares opposite corners in the guide footprint.
+        let depth_scale = 2.0 * abs(view.clip_from_view[1][1]) / max(z, 1e-6);
+        let cost = fma(depth_error, vec4(depth_scale), normal_cost);
+        let top_left_minus_bottom_right = cost.x - cost.w;
+        let bottom_left_minus_top_right = cost.z - cost.y;
+        let shift = vec2(top_left_minus_bottom_right + bottom_left_minus_top_right,
+                         top_left_minus_bottom_right - bottom_left_minus_top_right);
+        let f = clamp(fract(center) + shift, vec2(0.0), vec2(1.0));
+        return vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+    }
+
+    // Host pre-shading is sparse outside terrain. Keep the nearest matching valid tap there.
+    let cost = depth_error * (2.0 / max(z, 0.3)) + normal_cost;
+    var weights = vec4(0.0);
+    var score = 1e10;
+    var distance_squared = 1e10;
+    for (var i = 0u; i < 4u; i += 1u) {
+        if !valid[i] {
             continue;
         }
-        let normal = textureLoad(half_normal_guide, at, 0).r;
-        let cost = 2.0 * abs(depth - z) / max(z, 0.3) + 4.0 * abs(normal - pixel.normal_guide);
-        let offset = vec2<f32>(at) - center;
-        let distance_squared = dot(offset, offset);
-        if cost < score || (cost == score && distance_squared < distance) {
-            score = cost;
-            distance = distance_squared;
-            best = at;
+        let offset = vec2<f32>(taps[i]) - center;
+        let candidate = dot(offset, offset);
+        if cost[i] < score || (cost[i] == score && candidate < distance_squared) {
+            score = cost[i];
+            distance_squared = candidate;
+            weights = vec4(0.0);
+            weights[i] = 1.0;
         }
     }
-    return best;
+    return weights;
 }
 
 @fragment
 fn compose(in: FieldVertexOutput) -> @location(0) vec4<f32> {
     let pixel = field_pixel(in.uv);
     let light = main_light_source();
-    let at = guide_texel(pixel);
-    var shadow: vec4<f32>;
-    var fog: vec3<f32>;
-    var diffuse: vec3<f32>;
-    if at.x >= 0 {
-        shadow = textureLoad(half_shadow, at, 0);
-        fog = textureLoad(half_fog, at, 0).rgb;
-        diffuse = textureLoad(half_diffuse, at, 0).rgb;
+    let size = vec2<i32>(textureDimensions(half_depth_guide));
+    let center = pixel.frame.uv * vec2<f32>(size) - 0.5;
+    let base = vec2<i32>(floor(center));
+    let taps = array(
+        clamp(base, vec2(0), size - 1),
+        clamp(base + vec2(1, 0), vec2(0), size - 1),
+        clamp(base + vec2(0, 1), vec2(0), size - 1),
+        clamp(base + vec2(1, 1), vec2(0), size - 1),
+    );
+    let weights = reconstruction_weights(pixel, center, taps);
+    var shadow = vec4(0.0);
+    var fog = vec3(0.0);
+    var diffuse = vec3(0.0);
+    if any(weights > vec4(0.0)) {
+        for (var i = 0u; i < 4u; i += 1u) {
+            let at = taps[i];
+            shadow += weights[i] * textureLoad(half_shadow, at, 0);
+            fog += weights[i] * textureLoad(half_fog, at, 0).rgb;
+            diffuse += weights[i] * textureLoad(half_diffuse, at, 0).rgb;
+        }
     } else {
         let full = shade_field(pixel, light);
         shadow = full.shadow;
