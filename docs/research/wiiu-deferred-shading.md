@@ -803,10 +803,87 @@ about 6 cm with the direction vector unchanged, and the center moves
 less than 0.1 mm. The center differs between the three locations.
 
 These samples establish an ongoing partial update and persistence
-across frames in this view. The raw capture-camera transforms and
-the timing and trigger for recentering over a longer displacement
-remain open. See the static center trace and cubemap draw path above.
-Keep the raw captures and per-subresource hashes local.
+across frames in this view. Keep the raw captures and per-subresource
+hashes local.
+
+### Live geometry capture camera
+
+The JP v208 sequences above and one additional snowy-night capture
+contain six frames with indexed geometry draws into a separate 64×64
+R11G11B10F cubemap at mip 0. Disassemble
+the Cemu-translated vertex shader of frame 85917 E269 and read the
+live vertex constant buffer at the bound descriptor offset. The shader
+uses remapped vec4s 2–4 for model-to-world, 5–7 for world-to-face-view,
+and 8–11 for face-view-to-clip. Its Vulkan output also remaps clip
+depth with `z = (z + w) / 2`. Remapped offsets can change with the
+material variant. For instance, E295 in the same frame uses 7–9 and
+10–13 for the latter two transforms.
+
+For a view matrix with rows `[R | t]`, solve `R C = -t` for the
+world position `C`. The forward direction is the negative third
+rotation row. Compare `C` with the independently reconstructed
+water parallax center, `environment[43..45] × environment[31]`
+from Field Expand in the same capture.
+
+| Capture frame | Representative draw | Geometry color attachment | Face | View forward | Geometry origin (world XYZ, m) | Distance to water center (mm) |
+| --- | ---: | --- | ---: | --- | --- | ---: |
+| 85917 | E269 | `tex_3ce3d800_fmt0816` | 0 | +X | (3186.064399, 302.838464, −1651.254469) | 0.400 |
+| 85918 | E280 | `tex_3ce3d800_fmt0816` | 1 | −X | (3186.064399, 302.838464, −1651.254469) | 0.400 |
+| 97432 | E313 | `tex_3ce62000_fmt0816` | 5 | +Z | (3045.106808, 349.579408, −1525.307220) | 7.392 |
+| 100801 | E295 | `tex_3ce62000_fmt0816` | 4 | −Z | (3030.518184, 355.656985, −1516.532683) | 0.614 |
+| 100802 | E261 | `tex_3ce62000_fmt0816` | 5 | +Z | (3030.518184, 355.656985, −1516.532683) | 0.597 |
+| 123839 (snowy night) | E264 | `tex_3ce62000_fmt0816` | 2 | +Y | (−3587.550965, 438.510616, −3008.733692) | 0.519 |
+
+The matching rows recur exactly across 77 sampled shader and frame
+pairs in the table, counted once per shader per frame.
+Stationary faces 0 and 1 share a capture position. Movement faces 4
+and 5 also share a position while the main camera translates. The
+capture and parallax centers agree to within 7.4 mm in these six
+frames. The turning frame resolves a nonzero difference between the
+two centers. Its cause and the timing of their recentering over a
+longer displacement remain open. The capture view for face 3
+was not recovered from this set.
+
+The sampled projection rows read as a centered 90° square projection.
+Their depth terms are approximately `z_clip = −1.00001991 z_view −
+0.20000198`, `w_clip = −z_view` before Cemu's Vulkan remap. They
+encode a near plane near 0.1 m and a far plane of order 10 km. The
+static EU v208 trace above records a 300 m configuration value.
+The relationship between that value, this live projection and CPU
+draw eligibility has yet to be established.
+
+### Live filter targets and terrain binding
+
+Two filter paths are visible in frames 97433 and 100803. Read bind
+point PS0 at the filter draws, then follow each copy to its destination
+mip and inspect PS8 at terrain composition.
+
+| Stage in frame 100803 | Source | Destination |
+| --- | --- | --- |
+| E1474 mip-0 draw | `tex_3ce3d800_fmt0816` | `tex_3d1ee800_fmt0816`, 64×64 |
+| E1487, E1500, E1513 mip draws | `tex_3ce3d800_fmt0816` | 32×32, 16×16 and 8×8 temporary targets |
+| E7971–7991 copies | The three temporary targets | Faces 0 and 1, mips 1–3 of `tex_3d1ee800_fmt0816` |
+| E338–438 staging draws | `tex_3ce62000_fmt0816` | Separate 64×64 staging cube |
+| E446–1389 staging filters and copies | Separate intermediate targets | Mips 1–3 of `tex_3ce62000_fmt0816`, six faces per copy batch |
+
+The terrain PS8 path reads the first destination. The eight draws
+in the terrain refresh of frame 100803 share one pixel shader. Each
+draw issues one explicit-LOD cubemap lookup per fragment. The bound
+LOD values are 0, 1, 2 and 3 for the four output sizes. All eight draws
+use additive blending with constant alpha and inverse constant alpha.
+The bound alpha is 0.2 in the sampled draws of frames 85917, 97433 and
+100803, giving `0.2 × sample + 0.8 × destination` before target
+quantization. This identifies the refresh blend on the terrain path.
+The initialization of the smaller temporary targets still needs
+tracing before treating their destination value as the previous
+published texel.
+
+The second cubemap also receives raw geometry draws, including faces 4 and 5
+in frames 100801 and 100802, then runs the six-face filter batches
+in 100803. The same ordering is visible across frames 97432 and
+97433. Keep the two-face terrain refresh and the six-face mip
+filter batch distinct. Selection or exchange of the raw cubemap
+roles across full cycles still needs a longer trace.
 
 ## Pre-shading fog (PS 140, read in Cemu GLSL)
 
