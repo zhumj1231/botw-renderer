@@ -35,6 +35,35 @@ to a flat tangent-space slope. The terrain shader uses these constants
 for the material maps in both lighting paths. The G-buffer normal
 itself uses a separate `2·c − 1` encoding.
 
+#### Terrain mesh transitions and material inputs
+
+The JP v208 program 9 vertex shader samples the current height slice first.
+Groups 5–14 then compute `g = max(abs(u − 0.5), abs(v − 0.5))` from the
+draw's mesh coordinates and `w = clamp(g·CB12[8].z + CB12[8].w, 0, 1)`.
+For `w > 0.01`, it samples a second height slice using the UV transform in
+`CB13[9]` and combines the two heights as `lerp(h0, h1, w)` before the world
+height scale. `CB12` and `CB13` are `gsys_user1` and `gsys_user2`.
+
+JP v208 RPX `0x036c5b64` reads the effective grid size `N` from the draw
+wrapper. `0x036c5b90–0x036c5bd0` computes the two coefficients as
+`z = 1/(A/N)` and `w = −(0.5 − A/N − B/N)/(A/N)`. The terrain constructor
+at `0x036f2544` and `0x036f2580` initializes `A = 15` and `B = 1.5`.
+`0x036c6018–0x036c6070` populates the draw data, which is bound at
+`0x036c659c–0x036c65b8`. These are static findings. A matching original
+draw still needs to establish its actual `N`, the two slices and transforms,
+and how its mesh covers the archive tiles. The independent renderer still
+uses skirts on its own tile meshes.
+
+The same program's pixel shader reads the two material IDs from the red and
+green of `tera_material` (`t7`, groups 16–23), each as
+`floor(255·c + 0.5)`. It fetches both records from buffer `b139` at `ID + 9`.
+`tera_normal` (`t8`) supplies the geometric normal components and additional
+material weights. `MaterialAlb` and `MaterialCmb` supply the per-material
+texture layers at `t9` and `t10`. The independent shader currently shades
+each of four `.mate` neighbors before filtering. Reproducing the native
+blend first requires recovering the construction of the two bound terrain
+textures and checking their channels in an original replay.
+
 **G-buffer objects** (`uking_mat`, variant `gsys_assign_gbuffer`, `gsys_weight` −1/0 - without scanning; family of programs found `material_variants.py`, variant - by `word[51]` key, Cemu - `matches.json`; read 2026-09-28):
 
 | Material (model) | Programme | Cemu PS |
@@ -54,6 +83,17 @@ The albedo of the tree (5241, 7581) is not just a texture. `sat(A + const_color0
 View space, like in the game: `P` - period, `z = −P.z`, `V = P/|P|` (from the camera) `N` - normal, `L = env4·r` - Where the main light goes (See)`r` = `base_light_change_ratio`, scene_material[2].w), `C = env5` - its color`BgDifColor × FeatureColor weather × BgDifIntencity` Palette, no exposure: [CPU](wiiu-render-cpu.md#main-light-env5-and-the-palettes-exposure)), `A` - Albedo, `m = (a8 & 0xfc)/252` (a8 = albedo.a·255) `gl` - normal.w, `flag` - bit 0 normal.w·255. `c = sat(−N·V)`, `nl = sat(−N·L)`The cupboard `gsys_cube_map` Read in the world direction (context lines)[11..13]), z axis with minus. scene material: [1] = (`cloud_ratio`, `depth_shadow_off`, `proj_shadow_off`, `rain_ratio`), [2] = (`rainfall`, `exposure`, `world_shadow_off`, `base_light_change_ratio`), [3] = (`main_rendering_light`, `skyocclusion_off`, `depth_shadow_scale`, `item_filter_alpha`) - uniforms manifest offset (`+1` in the descriptor = displacement 0x10·i + 4·j.
 
 ### PS 128: Shadows and SSAO – Expand
+
+JP v208 RPX `0x034009f4–0x03400a80` sets `e53.z` to the current shadow
+range minus 20 m and `e53.w` to that range minus 40 m. The range is the
+field at `shadow_state + 0x50`, which can be updated per frame at
+`0x038a6230` and `0x038a6278`. The JP `Main` graphics configuration defines
+three cascades and `depth_shadow_near_0_0` through `depth_shadow_near_0_3`
+values of 2, 32, 64 and 200 m. These describe the static configuration. The
+farthest split can also be set from the current range. The archived Cemu
+capture [shows three 720 × 720 maps](wiiu-deferred-shading.md) and leaves
+the live range and effective split distances to be read from an original
+draw.
 
 ```text
 Expand.x = sat(lerp(W⁴, Sh, sat(sm2.z + 1 − sat(0.05(z − e53.w))))·depth_shadow_scale
@@ -567,12 +607,15 @@ PS 32 uniforms map: u0/u1/u2 - context[16]/`sampler_locations`4]/[17], u3/u8 —
 Verified: Program options and samplers (manifest), reading GLSL, texture `ssao` (temporary example of `level0_slice`). No ALUs were executed.
 - What's in `gsys_light_prepass` during the main pass?
   The output of the Specular PS 112 (so with G-buffer water), the PS 32 would add a fully illuminated color to its own - twice; more likely, the `LightPrePass` main aisle (local sources) replaces layer 1 with its glare, and layer 0 - Diffuse + local diffuse.
-- `e53.zw` (Shadow and SSAO range, world shadow) and `e1`/`gsys_user2`.
+- Live shadow range and cascade splits for the matched Hateno view, and the
+  `e1`/`gsys_user2` ambient inputs in that view.
   `e39` and `gsys_depth_shadow_quarter` - [ section map of the sky above ](#map-of-the-sky-from-above-gsys_depth_shadow_quarter-and-e39-vis); there are no `cNormalizeParam` models, model size threshold, the core of Gaussian blur and whose position is the center (camera or player);
 - G-buffer grasses and distant trees read (section above); not read by VS
   normal beams, `grass_color` and 7/11 program selection for trees
-- Normal relief in G-buffer `uking_terrain` 9–11 (PS `583ea8604da62310`):
-  only the packaging is read; maps of normal materials, their mixture according to `.mate` and the projection on the slopes are not disassembled;
+- Terrain G-buffer normal in `uking_terrain` 9–11: the program 9 material
+  normal decode is documented above. The generation of `tera_normal`, its
+  relation to the raw `.mate` fields, and the final projection still need to
+  be traced.
 - relief gloss formula from `MaterialCmb.b` (`uking_terrain`); metal
   objects with metal maps (`uking_metal_color`  ⁇  0 for read five is not written - which materials are written, not checked);
 - Color combinator (`uking_colorN_calc_type`, sources 5xx) – formulas;
