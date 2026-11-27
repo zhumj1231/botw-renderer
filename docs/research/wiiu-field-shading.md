@@ -334,7 +334,12 @@ s    = sat((N·−L̂)·(N·−Ĥ)·(1 − sat(v2 − v1·Sem7.z)))    Ĥ = norm
 
 `T` - texture slot `_n0` shader = `_z0` material (`Plant_TreeBroadleaf_A_Trs`; `uking_transmission_color` 402); `v1…v5` - `const_value1…5` (krona 0.005, −0.15, 10, 20, 30); V ⁇  - normalized `Sem7` (from the camera: `−V̂·L̂` is large when looking at the sun), `Sem7.z` - its z to normalization (-distance on the axis of view: the effect fades from 30 to 230 m); L ⁇  = `env4·r`.
 
-**PS 120** (`preshading_shadow_field_leaf`, `9c0b7031078fba88`) → Expand (target 5): `x = sat(lerp(pcf, 1, sat(0.05(z − e53.z)))·depth_shadow_scale + depth_shadow_off)` – without the world shadow W4; the sampling point is shifted to `f₁`·1 m along N (and to `0.0791·(1 − (L·n)²)·nl` in smoothed normal, with the normal flag); `y` is retained; `z = w = 1`.
+**PS 120** (`preshading_shadow_field_leaf`, `9c0b7031078fba88`) writes
+Expand red with four cascade comparisons and a conditional center
+comparison from the previous cascade. The dynamic visibility fades to
+1 at the far edge of the cascade range before material scale and offset.
+Green retains the existing Expand green sample. Blue and alpha are 1.
+[Foliage receiver offset and comparison filter](wiiu-character-shading.md#expand-visibility-for-foliage-and-opaque-characters)
 
 **PS 108** (`preshading_field_leaf`, `fb2e18ae56397ca7`): as PS 112, with differences:
 - Shadow.x `= sat(proj0 + proj_shadow_off)·lerp(min(Ex, Ew), Ew, f₁)` —

@@ -46,8 +46,11 @@ Programs 36-103 (types 1-6) - `mat*` of other models `SystemModel` and `debug_si
 
 1. **G-buffer** (`uking_mat`, for `Mt_Face` program 10607, Cemu
    `d4670aaae44bf58c`; `Mt_Upper_Skin` — 5111. Outputs: material id (skin 13/255), albedo, normal, emission. `albedo.a·255 = 65 + ((ao.w·255 & 0xf0) >> 3)`: bit 0 = 1 (flare/alpha), bits 1-4 — the senior half-byte channel `w` `_ao0` card (transmission, `uking_transmission_channel` 40), bits 5-7 = 2 = `uking_chara_size`. Normal is written with a length of `(0.75 + 0.25·ao.x)` — **AO is encoded in the length of normal Z**; `normal.w` — quantized gly.
-2. **Shadows of** (PS 124, `preshading_shadow_chara`)
-   (`GBUFFER` +0x2e4c, in the remaining passes of `gsys_sssss`): x = shadow - PCF 4 samples of cascades (`gsys_depth_shadow_cascade`) with a normal displacement only at `N·L ≥ 0.35`, behind the cascades - the baked shadow of the world `gsys_dynamic_reflection(xz·0.0001 + 0.5)·env[42]` in the 4th power, plus `depth_shadow_off`; y - `uking_tex1` in the reflected view × (−N·V); z = 0.5 inside the cascades, otherwise 1; w = 1.
+2. **Expand shadows** (PS 124, `preshading_shadow_chara`). Red blends
+   the current cascade and baked world visibility using two distance fades.
+   Green comes from `uking_tex1` sampled in the reflected view direction.
+   Blue is 0.5 inside the dynamic shadow range and 1 outside. Alpha is 1.
+   [Expand visibility](#expand-visibility-for-foliage-and-opaque-characters)
 3. **Pre-shading** (PS 104, `preshading_chara`, 5 outputs).
    opaque character (id  ⁇  24): Shadow = (shadow from Expand, cloud shadow `sat(gsys_projection0 + proj_shadow_off)·depth_shadow_scale`, mist transmission, **0**); Fog = fog color; **Diffuse (layer 0 `gsys_light_prepass`) = 0**; Specular (layer 1) = simplified illuminated color (for refraction under water); Upscale = average coded normal. The fog is the same as water (PS 140).
 4. **Main Passage** (PS 16 leather / PS 0 `nonmetal`), blend
@@ -192,9 +195,9 @@ visibility query. The half-resolution classifier samples the tags at the
 same coordinates as terrain and scene depth. Character variants share
 class 8. Both classes write visibility from the independent cascade sampler
 with weight 1. Character samples skip the normal bias below the native
-0.35 light-facing threshold. The foliage and character shadow filters,
-the character's baked far shadow and remaining field materials still need
-to be matched.
+0.35 light-facing threshold. The independent renderer still shares the
+terrain cascade filter for foliage and characters. The native receiver
+offsets, character compare bias and baked world blend are traced below.
 
 A 640×360 Hateno Vulkan replay at 10:00 in clear weather forced terrain
 trees to use billboards with `BOTW_FAR_TREES_ONLY=1`. The camera prepass atlas draws
@@ -273,6 +276,96 @@ look vector. `cMainLightColor.rgb` is `dir_main` color times intensity
 
 **Interpretation.** The light of the character's surroundings **It doesn't depend on the normal.**: these are two colors of the sky (cube maps of the environment) - above and below the view, with raised saturation and normalized for the average brightness of the environment, with a smooth transition from top to bottom on the screen. `w = sat(1.2·sunshot)`: in the shadow (forest, cave) shadows on the character weaken, direct light is colored in `0.8·Amb`.
 
+### Expand visibility for foliage and opaque characters
+
+The JP v208 `uking_sys` pixel code is identical within variants
+120–123 (`preshading_shadow_field_leaf`) and within variants 124–127
+(`preshading_shadow_chara`). The former covers the masked class 6 used
+by near foliage and the two traced distant-tree variants. The latter
+covers opaque classes 8, 10, 12 and 14, including skin, hair and
+equipment materials that use this Expand draw. Translucent passes
+consume the resulting pre-shading targets later in the frame.
+Grass variants with raw class 4 join the terrain writer.
+
+Both writers sample half normalized linear depth, G-buffer normal and
+albedo, and the cascade array. The sampler slots for those four inputs
+are `[5, 2, 1, 7]` in PS 120 and `[6, 3, 2, 7]` in PS 124.
+They select the current cascade from `gsys_context[58].xy` using strict
+view-depth comparisons. Each uses four hardware comparisons at all
+sign combinations of a half-texel U and V offset. The texel sizes come
+from `gsys_environment[53].xy`. The shader averages the four comparison
+results equally.
+
+Here `z` is positive view depth, `P` is the reconstructed view-space
+point and `N` is the normalized G-buffer normal. `G` is the normalized
+cross product of the horizontal depth-neighbor difference and then the
+vertical one. Both differences are relative to `P`. The shaders form
+`P.xy` from the half-depth sample and `P.z` from a gathered depth tap.
+`D` is `environment[4].xyz * scene_material[2].w` and points along light
+travel. Let `M = normalize(1.5 * N - G)`, `d = dot(M,D)` and
+`Q = M - d*D`. `fadeNear` fades dynamic visibility to 1 over the last
+20 m, starting at `environment[53].z`.
+
+**Foliage.** The normal byte's low bit `h` gates the depth-neighborhood
+offset. The albedo byte's bit 1 gives `t`, a 0 or 1 metre offset along
+the surface normal. `Z` is the projected depth of the offset point.
+`i` is the selected cascade index.
+
+```text
+point        = P + t*N + 0.0791*h*(1 - d*d)*sat(-dot(N,D))*Q
+compareDepth = sat(Z - 0.002 - 0.0005*i)
+C            = average(four comparisons in cascade i)
+if i > 0 and C < 1:
+    C *= one center comparison in cascade i - 1, using its projection and bias
+Expand.r     = sat(lerp(C, 1, fadeNear) * depth_shadow_scale + depth_shadow_off)
+```
+
+ALU groups 20–46 select the cascade, offset the receiver and form the
+sample coordinates. Groups 51–75 apply the average, optional previous
+cascade and fade. Group 77 applies the material scale and offset. The
+dynamic samples are skipped when `fadeNear` reaches 1. Far visibility
+for this writer is 1 before the material scale and offset.
+
+**Opaque characters.** The albedo alpha byte `a` supplies the compare
+bias and the surface-facing test gates the receiver offset. The camera
+term in that offset is `gsys_context[17].y = tan(fovy/2)`.
+`B` is the fourth power of the clock-weighted baked RGB sample.
+
+```text
+T            = ((a & 0x1c) / 28) * (1 - ((a & 2) >> 1))
+gate         = 1 if -dot(N,D) >= 0.35 else 0
+point        = P + 0.003*gate*(1 + z*tan(fovy/2))*(1 - d*d)*Q
+compareDepth = sat(max(0.00001, Z - 0.0015 - 0.05*T))
+C            = average(four comparisons in cascade i)
+dynamic      = lerp(C, 1, fadeNear)
+fadeFar      = sat(0.05 * (z - environment[53].w))
+dynamicMix   = sat(1 + world_shadow_off - fadeFar)
+bakedUV      = (worldX*0.0001 + 0.5, worldZ*0.000125 + 0.5)
+B            = dot(sampleLevelZero(solar_irradiation, bakedUV).rgb, environment[42].rgb)^4
+Expand.r     = sat(lerp(B, dynamic, dynamicMix) + depth_shadow_off)
+```
+
+PS 124 uses only the current cascade for `C`. Groups 12–21 unpack the
+albedo flags, groups 26–54 form the receiver and comparison coordinates,
+and groups 59–74 average and blend the two sources. World X and Z come
+from applying rows 11 and 13 of `gsys_context` to the view-space point.
+The dynamic sample is skipped once `fadeNear` reaches 1. With
+`world_shadow_off` at zero,
+the baked blend starts at range minus 40 m and reaches its full weight
+at range minus 20 m. PS 124 reads `solar_irradiation` through
+`gsys_dynamic_reflection` at slot 14. Its asset and clock-derived
+weights are shared with the field shader. [Baked texture and clock weights](wiiu-field-shading.md#far-shadow-weights-by-time-of-day)
+
+An offline interpreter checked selected ALU groups with 2,048 inputs
+per check for fade and cascade selection, baked UVs and blend, alpha-byte
+bias, depth-neighbor reconstruction, receiver offsets and comparison
+coordinates. The checks used synthetic comparison values. Recomputing the
+analyzer from the archived independent Vulkan readbacks reproduced the GPU
+result to within 0.0001 in the clear, cloudy and clear-night Link views.
+The separate billboard replay above verified class-6 coverage.
+A native replay at the requested views can read the draw-time sampler
+state and the resulting Expand and analyzer values.
+
 ## Reproduction and limitations
 
 ```sh
@@ -286,4 +379,4 @@ python3 tools/research/cemu_uniform_map.py \
   $REF/cemu-sessions/20260928T012415Z-cache-replay/shaders/728b9bc3556c3de1_0000000000001ec9_ps.txt
 ```
 
-Verified: Options matching → programs (exact), uniforms cards PS 16, PS 0, PS 104, VS 16, LightAnalyzer step 4 (tool), CPU addresses. No ALUs were executed; formulas - reading GLSL, not native-probe. `cMainLightColor.w` outside the default branch, `cAmbientScaleChara`writer `toon_adjust` (scene_material[0]How G-buffer reads hair `uking_grossy_intensity` (2, FORMATS (archived reference)), loading `ksysla` (file not found), which cube map is tied as `cCubeMap`/`gsys_cube_map`, full formula `chara_grossy` texture `uking_tex1`difference `nonmetal_direct` (id 9 with the same programs 0-3), flags `albedo.a` materials other than the face. task (upstream reference: `../tasks/deferred-lighting.md`).
+Verified: Options matching → programs (exact), uniforms cards PS 16, PS 0, PS 104, VS 16, LightAnalyzer step 4 (tool), CPU addresses. The earlier character-composition formulas were read from GLSL. The Expand red arithmetic was checked separately against GX2 instruction groups. `cMainLightColor.w` outside the default branch, `cAmbientScaleChara`writer `toon_adjust` (scene_material[0]How G-buffer reads hair `uking_grossy_intensity` (2, FORMATS (archived reference)), loading `ksysla` (file not found), which cube map is tied as `cCubeMap`/`gsys_cube_map`, full formula `chara_grossy` texture `uking_tex1`difference `nonmetal_direct` (id 9 with the same programs 0-3), flags `albedo.a` materials other than the face. task (upstream reference: `../tasks/deferred-lighting.md`).
