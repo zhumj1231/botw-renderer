@@ -102,23 +102,23 @@ with the event map as a reference for matching pipeline state.
 
 ## Continue here
 
-1. **Trace representative materials.** Frame 3830 establishes the
+1. **Close the outdoor clear-day baseline.** Use frame 3830 for the
+   [terrain shadow and SSAO readbacks](docs/research/wiiu-deferred-shading.md#clear-day-terrain-expand-at-eid-9949).
+   Use the same capture to check the AO silhouette and the reconstructed
+   ambient output. Compare `guide_texel` to original EID 12855 across the
+   same material boundaries.
+2. **Measure outdoor ambient and atmosphere.** Read the clear-day
+   LightAnalyzer, exposure, sky and fog inputs from the archived frame.
+   Compare a matched clear night and a matched rainy daytime view when
+   new captures are available. Use Hebra snowfall for the precipitation
+   draw and cold-region terrain.
+3. **Trace remaining material paths.** Frame 3830 establishes the
    [terrain overlap weights](docs/research/wiiu-field-shading.md#live-terrain-material-sample-in-frame-3830)
-   and the [foliage route](docs/research/wiiu-character-shading.md#live-class-7-foliage-in-frame-3830)
-   through masked Expand and raw class-7 HDR. Trace Link skin, cloth and
-   equipment next using the
-   [material variant mapping](docs/research/wiiu-material-variants.md).
+   and the [foliage route](docs/research/wiiu-character-shading.md#live-class-7-foliage-in-frame-3830).
+   Link skin, cloth and equipment are paused at the user's request.
    Match the native terrain permutation and verify prior-buffer access
-   before scheduling the independent blend. Update the
-   [capture checklist](docs/research/wiiu-deferred-shading.md#original-wii-u-capture-checklist).
-2. **Compare live lighting inputs with the original.** Use a matched
-   Wii U JP v208 Hateno view. Confirm cascade splits and depth texture,
-   comparison state, Expand red by class, and live analyzer and exposure
-   values. Use the archived replay for questions it covers.
-3. **Match guided reconstruction and remaining material paths.** Compare
-   `guide_texel` to original EID 12855 and check slopes, silhouettes and
-   material boundaries. Verify the second shared pre-shading layer used
-   by water. Measure cost after the techniques and inputs are aligned.
+   before scheduling the independent blend. Verify the second shared
+   pre-shading layer used by water.
 
 Start code review in [terrain_gbuffer.rs](crates/render/src/terrain_gbuffer.rs)
 for scheduling, target allocation and D16 classification,

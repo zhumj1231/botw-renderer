@@ -48,6 +48,35 @@ The reference path for lighting is the same-view forward capture above.
 The Wii U capture is the reference for pass order, formats, and lighting
 behavior.
 
+### Clear-day terrain Expand at EID 9949
+
+Replay Wii U JP v208 frame 3830 with RenderDoc 1.38. At EID 9949,
+the translated field fragment program reads the context from Vulkan
+set 1 binding 7 (`uniformBlockPS1`) and the environment from binding
+8 (`uniformBlockPS6`). Read the corresponding vectors at byte offset
+`16 * index` from each bound descriptor's base.
+
+| Draw-time field input | Value |
+| --- | --- |
+| `gsys_context[58].xyz` | (7.790757, 24.622145, 120) m |
+| `gsys_environment[53].xy` | (1/720, 1/720), consistent with the three 720×720 cascade views |
+| `gsys_environment[53].zw` | (100, 80) m, yielding an outer range of 120 m by both fade formulas |
+| `gsys_environment[42].rgb` | (0, 0.26175392, 0.73824608), consistent with about 17:40 from the traced clock curve |
+
+The second split matches `7.790757 + 0.15 * (120 - 7.790757)` within
+float precision. The displayed clock time was not independently
+measured in this replay. The fragment program binds the comparison
+array at PS8 and baked shadow at PS15.
+
+Read resource 12397 (RGBA8 UNORM) before and after the draw and resource
+12332 (D16 class) after it. Count only the active 640×360 viewport.
+The class-4 mask contains 201,187 cells. EID 9949 changes 196,975 of
+these RGBA texels and zero texels outside the mask. After the draw,
+66,006 class-4 cells have red below 255 and 5,241 have blue below 255.
+This is a live clear-day reference for visibility and field SSAO.
+It does not identify contact and silhouette samples for the final
+ambient A/B, or establish a measured native hardware cost.
+
 ## Outdoor material paths
 
 The archived frame above establishes the shared render targets and the
@@ -165,8 +194,8 @@ path while a row is open.
 
 | Topic | Capture | Question the capture can answer | Complete without a new capture? Evidence and blocker |
 | --- | --- | --- | --- |
-| Real-time shadows | Hateno clear daylight | Read the drawn cascade count and depth map dimensions, the first two splits in `gsys_context[58].xy` and the current range from `gsys_environment[53].z + 20`. Cross-check against `[53].w + 40`. Read `gsys_environment[42].rgb` and compare it to the clock-derived weights, then inspect Expand red on the distant slope. | **Complete for stock JP v208 Main terrain, as static research.** The traced main-view state leaves the history-based range guard off, while the scene preset and runtime offsets still determine the splits and fade starts. The field shader's cascade sampling and baked far-shadow blend are traced. The independent renderer still uses Bevy cascade maps and configured distances. [Field shadows](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
-| SSAO | Hateno clear, with a rock or trunk in contact with the ground and nearby open ground | Verify the live depth, noise and final lighting sampler bindings. Compare Expand blue and the reconstructed ambient light at the contact, across the silhouette and on open ground. | **Complete for stock JP v208 MainField SSAO and the scene-profile selection in the audited transitions.** Expand AO is traced from field depth and material selection through reconstruction. The shipped Main and UI profiles both disable creation of the separate AGL SSAO object. The graphics initialization loads these profiles. The audited indoor, shrine and event paths supply no replacement profile. [SSAO scene configuration](#ssao-scene-configuration) |
+| Real-time shadows | Hateno clear daylight | Read the drawn cascade count and depth map dimensions, the first two splits in `gsys_context[58].xy` and the current range from `gsys_environment[53].z + 20`. Cross-check against `[53].w + 40`. Read `gsys_environment[42].rgb` and compare it to the clock-derived weights, then inspect Expand red on the distant slope. | **Complete for the JP v208 Main terrain algorithm and the clear-day capture inputs.** EID 9949 confirms splits of 7.79 and 24.62 m with a 120 m outer range, both fade starts and the baked RGB weights. [Clear-day Expand](#clear-day-terrain-expand-at-eid-9949) The traced main-view state leaves the history-based range guard off, while the scene preset and runtime offsets still determine the splits and fade starts. The field shader's cascade sampling and baked far-shadow blend are traced. The independent renderer still uses Bevy cascade maps and configured distances. [Field shadows](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
+| SSAO | Hateno clear, with a rock or trunk in contact with the ground and nearby open ground | Verify the live depth, noise and final lighting sampler bindings. Compare Expand blue and the reconstructed ambient light at the contact, across the silhouette and on open ground. | **Complete for stock JP v208 MainField SSAO and the scene-profile selection in the audited transitions.** Expand AO is traced from field depth and material selection through reconstruction. EID 9949 confirms 5,241 class-4 cells below neutral blue in the clear-day game frame. Contact and silhouette parity in the independent renderer remains a separate check. The shipped Main and UI profiles both disable creation of the separate AGL SSAO object. The graphics initialization loads these profiles. The audited indoor, shrine and event paths supply no replacement profile. [SSAO scene configuration](#ssao-scene-configuration) |
 | Indirect light | Hateno clear, cloudy, and clear at night, with nearby foliage and an opaque character visible | Read the bound comparison sampler and Expand red for terrain, foliage and the character. Check the first reduction's input and output sizes, then read the final exposure and analyzer texels. | **Complete for the static JP v208 `DeferredMain` Expand red and LightAnalyzer paths.** The four writer paths, foliage and opaque character comparison filters, character baked blend, reduction and weather and light inputs are traced. The independent renderer has separate foliage and opaque-character receiver offsets and filters, a time-weighted baked blend for characters, and a shared GPU reduction. Offscreen GPU readback verifies foliage and opaque-character red, the far blend, and the reduction. Its Bevy depth and cascades and default scene shadow controls remain inputs to the independent implementation. [Expand visibility](wiiu-character-shading.md#expand-visibility-for-foliage-and-opaque-characters) |
 | Atmosphere and day/night | The same Hateno clear day and clear night views | Read the pre-shading fog and transmission at near and distant terrain, the main light direction and color, and the sky color before tone mapping. This gives per-view daylight and night reference values for the independent renderer. | **Complete for the JP v208 main view with the shipped atmosphere table.** The stock table load, scattering kernels and per-view palette-driven bake are traced. The independent bake passed the reference check on the decoded table. Its final brightness conversion remains fitted pending per-view values. [Sky LUT passes](wiiu-sky-resources.md#wii-u-v208-shipped-table-and-the-precompute-passes) |
 | Weather and seasons | Hateno rain and clear daylight, with exposed terrain or stone visible in both. Hebra with falling snow. | Read `rain_ratio`, the wetness value in the green channel of PreShading(Shadow), and the opaque HDR result at the same Hateno surfaces. In the Hebra frame, identify the precipitation draws and read the ground's actual material, wetness and lighting. | **Complete for stock JP v208 MainField terrain and outdoor weather, as static research.** The tile data already contains the snow material mix. Snowfall uses a separate effect path, while the deferred rain inputs decay toward dry. The traced terrain, forecast and palette paths have no independent seasonal selector. The independent forecast still approximates the cold transition. [Snow-covered terrain](weather.md#12-snow-covered-mainfield-terrain-in-jp-v208) |
