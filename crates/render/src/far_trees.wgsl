@@ -278,7 +278,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // at each pixel's world position like the ground's.
     let shade = 1.0 - cloud_shadow(cloud_shadow_map, cloud_shadow_sampler, clouds, world);
     let rain = vec2<f32>(field_wetness_at(look_texture, look, world, cover, surface.N.y, surface.flag), look.weather[0].y);
-    var lit = field_color(pbr_input, surface, frame, shade, 1.0, cover, cube_means, rain);
+    var lit = field_color(pbr_input, surface, frame, shade, 1.0, cover, cube_means, rain, look.weather[0].w);
     lit = apply_haze(look, lit, world, normalize(world - view.world_position));
     var out: FragmentOutput;
     out.color = main_pass_post_lighting_processing(pbr_input, vec4<f32>(lit, 1.0));

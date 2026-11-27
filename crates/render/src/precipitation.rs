@@ -171,6 +171,7 @@ const CLOCK_PERIOD: f32 = 120.0;
 /// them with a clock of frames wrapped at 120.
 fn wet_the_look(
     real: Res<Time>,
+    weather: Res<Weather>,
     precipitation: Res<Precipitation>,
     mut clock: Local<f32>,
     mut look: ResMut<crate::look::Look>,
@@ -178,14 +179,14 @@ fn wet_the_look(
     *clock = (*clock + real.delta_secs() * 30.0).rem_euclid(CLOCK_PERIOD);
     // SI-WTH-11: the rain ratio's suppression factor `(KSys+0x1f4)+0x1f8`
     // is taken as 0.
-    let weather = Vec4::new(
+    let shader_weather = Vec4::new(
         precipitation.rain_ratio,
         precipitation.rainfall,
         (*clock * 0.125).fract(),
-        0.0,
+        weather.overcast_sky(),
     );
-    if look.weather[0] != weather {
-        look.weather[0] = weather;
+    if look.weather[0] != shader_weather {
+        look.weather[0] = shader_weather;
     }
 }
 

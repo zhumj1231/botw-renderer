@@ -80,8 +80,8 @@ struct Look {
     // texels, [20].z the main view's `clip_from_view[1][1]`, [20].w 1 when
     // it is drawn.
     shafts: array<vec4<f32>, 4>,
-    // Texels 24–27, the wet ground (see `field_wetness`): [24].x the rain
-    // ratio, [24].y the rainfall, [24].z the rain pulse's clock.
+    // Texels 24–27, weather: [24].x the rain ratio, [24].y the rainfall,
+    // [24].z the rain pulse's clock, [24].w the overcast sky weight.
     weather: array<vec4<f32>, 4>,
     // Not in the texture: the scattering fog's colour for the surface, from
     // the sky table (`read_look_at`); .a 1 when there is one.

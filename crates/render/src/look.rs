@@ -288,10 +288,10 @@ pub struct Look {
     /// (texels), 20.z the main view's `clip_from_view[1][1]`, 20.w 1 when
     /// it is drawn into rows [`LOOK_MASK_ROW`]….
     pub volume_mask: [Vec4; 4],
-    /// Texels 24–27: the wet ground (`precipitation.rs`): 20.x
-    /// `uking_dynamic_rain_ratio`, 20.y `uking_dynamic_rainfall`, 20.z the
+    /// Texels 24–27: weather (`precipitation.rs`): 24.x
+    /// `uking_dynamic_rain_ratio`, 24.y `uking_dynamic_rainfall`, 24.z the
     /// rain pulse's clock (`gsys_context[20].y`, frames wrapped at 120)
-    /// as `time·0.125` wrapped to [0, 1).
+    /// as `time·0.125` wrapped to [0, 1), 24.w the overcast sky weight.
     pub weather: [Vec4; 4],
 }
 

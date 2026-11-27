@@ -266,7 +266,7 @@ fn fragment(
         }
     }
     let rain = vec2<f32>(field_wetness_at(look_t, look, world, cover, surface.N.y, surface.flag), look.weather[0].y);
-    var lit = field_color(pbr_input, surface, frame, 1.0 - shade, ao, cover, means, rain);
+    var lit = field_color(pbr_input, surface, frame, 1.0 - shade, ao, cover, means, rain, look.weather[0].w);
     // Glowing parts: the game's G-buffer writes them into the scene colour,
     // which its main pass adds under the shaded colour times `src.a`, the
     // fog's transmittance squared (`field_hybrid` PS 32: bit 0 of the

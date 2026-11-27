@@ -560,8 +560,8 @@ PS 32 uniforms map: u0/u1/u2 - context[16]/`sampler_locations`4]/[17], u3/u8 —
 Verified: Program options and samplers (manifest), reading GLSL, texture `ssao` (temporary example of `level0_slice`). No ALUs were executed.
 - What's in `gsys_light_prepass` during the main pass?
   The output of the Specular PS 112 (so with G-buffer water), the PS 32 would add a fully illuminated color to its own - twice; more likely, the `LightPrePass` main aisle (local sources) replaces layer 1 with its glare, and layer 0 - Diffuse + local diffuse.
-- `e53.zw` (Shadow and SSAO range, world shadow), `e1`/`gsys_user2`,
-  `cloud_ratio`. `e39` and `gsys_depth_shadow_quarter` - [ section map of the sky above ](#map-of-the-sky-from-above-gsys_depth_shadow_quarter-and-e39-vis); there are no `cNormalizeParam` models, model size threshold, the core of Gaussian blur and whose position is the center (camera or player);
+- `e53.zw` (Shadow and SSAO range, world shadow) and `e1`/`gsys_user2`.
+  `e39` and `gsys_depth_shadow_quarter` - [ section map of the sky above ](#map-of-the-sky-from-above-gsys_depth_shadow_quarter-and-e39-vis); there are no `cNormalizeParam` models, model size threshold, the core of Gaussian blur and whose position is the center (camera or player);
 - G-buffer grasses and distant trees read (section above); not read by VS
   normal beams, `grass_color` and 7/11 program selection for trees
 - Normal relief in G-buffer `uking_terrain` 9–11 (PS `583ea8604da62310`):

@@ -237,7 +237,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // G-buffer class 4, shaded by the terrain's pre-shading (PS 112).
     let shade = cloud_shadow(cloud_shadow_map, cloud_shadow_sampler, clouds, world);
     let rain = vec2<f32>(field_wetness_at(look_texture, look, world, cover, surface.N.y, surface.flag), look.weather[0].y);
-    var lit = field_color(pbr_input, surface, frame, 1.0 - shade, 1.0, cover, cube_means, rain);
+    var lit = field_color(pbr_input, surface, frame, 1.0 - shade, 1.0, cover, cube_means, rain, look.weather[0].w);
     lit = apply_haze(look, lit, world, normalize(world - view.world_position));
     var out: FragmentOutput;
     out.color = main_pass_post_lighting_processing(pbr_input, vec4<f32>(lit, 1.0));

@@ -127,6 +127,15 @@ scene clock at startup while asset loading and capture still advance.
 At 1280×720, two separate Hateno captures with the same camera, time and
 weather produced byte-identical PNGs with this option.
 
+The terrain and foliage composition shaders scale the direct specular
+term by `uking_dynamic_cloud_ratio`. In JP v208 `uking_sys_shading` PS 32,
+ALU group 56 multiplies this value into the direct specular chain (CB10,
+vec4 1.x). The rainy field variant (PS 33) also reads the factor. The
+host uses one minus the current overcast sky weight, the same source
+as the water glint. In the frozen Hateno comparison, the 10:00 clear
+image stayed pixel-identical and the 16:00 rain image lost its direct
+specular highlights. The sky reflection and wet normal still contribute.
+
 ### Capturing the same frame on Windows
 
 Launch the release renderer with RenderDoc's `capture` command. Use

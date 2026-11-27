@@ -185,6 +185,6 @@ fn compose(in: FieldVertexOutput) -> @location(0) vec4<f32> {
     }
     let look = read_look_at(look_texture, pixel.pbr.world_position.xyz);
     let surface = wet_field(pixel.surface, -pixel.pbr.V, vec2(shadow.y, look.weather[0].y));
-    let lit = field_compose(pixel.pbr, surface, pixel.frame, light, shadow.x, diffuse, shadow.w);
+    let lit = field_compose(pixel.pbr, surface, pixel.frame, light, shadow.x, diffuse, shadow.w, look.weather[0].w);
     return main_pass_post_lighting_processing(pixel.pbr, vec4(lit * shadow.z + fog, 1.0));
 }

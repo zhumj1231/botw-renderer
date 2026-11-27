@@ -428,7 +428,7 @@ fn field_ambient_at(s: FieldSurface, z: f32, ao: f32, vis: f32, means: texture_2
     return mix(near, hemi, saturate(0.01 * z - 0.5));
 }
 
-fn field_compose(pbr: PbrInput, s: FieldSurface, frame: Frame, light: MainLight, S: f32, ambient: vec3<f32>, vis: f32) -> vec3<f32> {
+fn field_compose(pbr: PbrInput, s: FieldSurface, frame: Frame, light: MainLight, S: f32, ambient: vec3<f32>, vis: f32, overcast: f32) -> vec3<f32> {
     let V = -pbr.V;
     let N = s.N;
     let to_light = light.to_light;
@@ -454,8 +454,9 @@ fn field_compose(pbr: PbrInput, s: FieldSurface, frame: Frame, light: MainLight,
     // The foliage's sheen and reflection are weaker where light passes
     // through, its reflection by a quarter anyway.
     let through = 1.0 - 0.5 * s.translucent;
-    // SI-LGT-10: sky occlusion, ambient tint and specular terms simplified.
-    let spec = C * F_L * (D * G * 0.25 * S * n_l) * through;
+    // PS 32/28 use uking_dynamic_cloud_ratio for direct specular.
+    let clear_sky_share = saturate(1.0 - overcast);
+    let spec = C * F_L * (D * G * 0.25 * S * n_l) * through * clear_sky_share;
     let F_E = F0 + (1.0 - F0) * pow(1.0 - c, 5.0) / (4.0 - 3.0 * gl);
     let env = cube_at(reflect(V, N), 3.0 - 3.0 * gl) * F_E * mix(0.25 * (1.0 + m), 1.0, vis)
         * mix(1.0, 0.75, s.leaf) * through;
@@ -478,11 +479,11 @@ fn field_compose(pbr: PbrInput, s: FieldSurface, frame: Frame, light: MainLight,
     return s.albedo * diffuse + spec + env + local_lights(pbr, N, s.albedo * (1.0 - m), frame.p.z);
 }
 
-fn field_color(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao: f32, cover: f32, means: texture_2d<f32>, rain: vec2<f32>) -> vec3<f32> {
+fn field_color(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao: f32, cover: f32, means: texture_2d<f32>, rain: vec2<f32>, overcast: f32) -> vec3<f32> {
     let s = wet_field(s_in, -pbr.V, rain);
     let light = main_light_source();
     let S = field_shadow(light, pbr, frame.p.z, shadow, s.translucent);
     let vis = sky_visibility(cover, pbr.world_position.y, s.N.y, s.flag, -frame.p.z);
     let ambient = field_ambient_at(s, -frame.p.z, ao, vis, means);
-    return field_compose(pbr, s, frame, light, S, ambient, vis);
+    return field_compose(pbr, s, frame, light, S, ambient, vis, overcast);
 }
