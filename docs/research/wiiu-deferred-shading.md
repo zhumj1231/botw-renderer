@@ -61,10 +61,20 @@ field pixels for pre-shading. It computes shadow (sun and cloud attenuation,
 wetness, fog transmission and sky visibility), fog inscattering and diffuse
 ambient light from the shared field and haze formulas. The half-resolution
 normal guide is the mean of the three encoded normal channels, as observed
-in EID 11019. Composition uses full-resolution D16 Equal testing and the
-full-resolution albedo, gloss and normal for the direct light, reflection and
-the rest of the field shading. It writes into the view's HDR color before
-transparent draws and post-processing.
+in EID 11019. Original PS 32 uses decoded RT3 normals with the view-space
+ray for its incident angle. The host stores the mapped normal in view space
+and takes the guide mean in that basis. Lighting rotates the decoded normal
+back into the world basis used by Bevy.
+
+Two matching 1280×720 Hateno captures verified the basis change over
+823,996 common class-4 pixels. The rotated RGB differed from a CPU rotation
+by at most 1.162 encoded channel units and the packed gloss and flags matched.
+All 206,138 valid half-resolution guide texels matched the quantized mean
+of the sampled RT3 normal in the view-space capture.
+
+Composition uses full-resolution D16 Equal testing and the full-resolution
+albedo, gloss and normal for direct light and reflections. It writes into the
+view's HDR color before transparent draws and post-processing.
 
 **SI-GBUF-03**. The host tracks linear view depth in metres in an R32F
 texture written with pre-shading. Depth and surface position are reconstructed

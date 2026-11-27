@@ -3,7 +3,7 @@
     mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT,
     pbr_functions::main_pass_post_lighting_processing,
     pbr_types::{PbrInput, pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
-    view_transformations::{position_ndc_to_view, position_ndc_to_world},
+    view_transformations::{direction_view_to_world, position_ndc_to_view, position_ndc_to_world},
 }
 #import botw::clouds::{CloudParams, cloud_shadow}
 #import botw::look::{read_look_at, sky_cover, field_wetness_at, haze_terms}
@@ -42,7 +42,7 @@ fn field_pixel(uv: vec2<f32>) -> FieldPixel {
     let bits = u32(round(normal.a * 255.0));
     var surface: FieldSurface;
     surface.albedo = material.rgb;
-    surface.N = normalize(normal.rgb * 2.0 - 1.0);
+    surface.N = normalize(direction_view_to_world(normal.rgb * 2.0 - 1.0));
     surface.gloss = f32(bits >> 2u) / 63.75;
     surface.metal = f32(u32(round(material.a * 255.0)) >> 2u) / 63.0;
     surface.flag = f32(bits & 1u);

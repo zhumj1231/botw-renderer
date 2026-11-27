@@ -182,10 +182,11 @@ struct FieldGBuffer {
 fn gbuffer_fragment(in: FieldVertex) -> FieldGBuffer {
     let field = sample_terrain(in.world, in.normal, in.color);
     let gloss = floor(clamp(field.gloss, 0.0, 1.0) * 63.75);
+    let view_normal = (view.view_from_world * vec4(field.normal, 0.0)).xyz;
     return FieldGBuffer(
         vec2(f32(#{BOTW_FIELD_CLASS}) / 255.0, 0.0),
         vec4(field.albedo, 0.0),
-        vec4(field.normal * 0.5 + vec3(0.5), (gloss * 4.0 + 1.0) / 255.0),
+        vec4(view_normal * 0.5 + vec3(0.5), (gloss * 4.0 + 1.0) / 255.0),
     );
 }
 #else
