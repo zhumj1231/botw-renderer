@@ -144,7 +144,7 @@ impl From<&ObjectShading> for ObjectParams {
 /// blue reads 0, and so do surfaces without a normal map (an assumption for
 /// those; the rocks with the terrain's textures take theirs from
 /// `MaterialCmb`, not loaded for objects).
-// SI-LGT-19: gloss without a map, metal and SSAO range are ours.
+// SI-LGT-19: gloss without a map and metal are ours.
 const GLOSS_WITHOUT_MAP: f32 = 0.0;
 
 /// How far a crown's leaf normals bend out from its centre (a fit: the game's

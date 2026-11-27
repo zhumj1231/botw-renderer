@@ -46,7 +46,7 @@
 }
 #import botw::clouds::cloud_shadow
 #import botw::look::{read_look_at, apply_haze, sky_cover, field_wetness_at}
-#import botw::deferred_light::{FieldSurface, Frame, field_color, game_frame, main_light, ssao}
+#import botw::deferred_light::{FieldSurface, Frame, field_color, field_ssao, game_frame, main_light, main_light_source}
 #import botw::normal_map::mapped_normal
 #endif
 
@@ -283,13 +283,10 @@ fn fragment(
         surface.albedo = pbr_input.material.base_color.rgb;
         surface.N = pbr_input.N;
         surface.gloss = maps.x;
-        // SI-LGT-19: gloss without a map, metal and SSAO range are ours.
+        // SI-LGT-19: gloss without a map and metal are ours.
         surface.metal = pbr_input.material.metallic;
         surface.flag = 1.0;
-        // As on the terrain: past 150 m the ambient is the analyzer's sky.
-        if -frame.p.z < 150.0 {
-            ao = ssao(frame, noise, in.position.xy);
-        }
+        ao = field_ssao(frame, noise, main_light_source().index);
     }
     let rain = vec2<f32>(field_wetness_at(look_t, look, world, cover, surface.N.y, surface.flag), look.weather[0].y);
     var lit = field_color(pbr_input, surface, frame, 1.0 - shade, ao, cover, means, rain, look.weather[0].w);

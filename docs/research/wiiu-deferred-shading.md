@@ -165,7 +165,7 @@ path while a row is open.
 | Topic | Capture | Question the capture can answer | Complete without a new capture? Evidence and blocker |
 | --- | --- | --- | --- |
 | Real-time shadows | Hateno clear daylight | Read the drawn cascade count and depth map dimensions, the first two splits in `gsys_context[58].xy` and the current range from `gsys_environment[53].z + 20`. Cross-check against `[53].w + 40`. Read `gsys_environment[42].rgb` and compare it to the clock-derived weights, then inspect Expand red on the distant slope. | **Complete for stock JP v208 Main terrain, as static research.** The traced main-view state leaves the history-based range guard off, while the scene preset and runtime offsets still determine the splits and fade starts. The field shader's cascade sampling and baked far-shadow blend are traced. The independent renderer still uses Bevy cascade maps and configured distances. [Field shadows](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
-| SSAO | Hateno clear | Verify the live depth and noise bindings at field PS 128 and read Expand blue and the terrain diffuse output at a ground contact and nearby open ground. | **Complete for Main terrain.** The native half-depth producer does one point sample across depth edges. The noise, four-tap kernel, diffuse input and cutoff at the current shadow range are traced. The independent terrain path follows the configured cascade range and passed an offscreen Vulkan readback. [AO formula](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
+| SSAO | Hateno clear, with a rock or trunk in contact with the ground and nearby open ground | Verify the live depth, noise and final lighting sampler bindings. Compare Expand blue and the reconstructed ambient light at the contact, across the silhouette and on open ground. | **Open.** The Main field kernel, late translucent ordering and default reconstruction sampler are traced. A controlled independent readback confirmed that the same ground pixels change when a wall enters the depth buffer. The renderer shares the depth grid and shadow cutoff, but still evaluates object receivers in their forward pass. Which special scene paths override the Main configuration remains open. [SSAO depth and material boundaries](#ssao-depth-and-material-boundaries) |
 | Indirect light | Hateno clear, cloudy, and clear at night, with nearby foliage and the character visible | Read Expand red on terrain, foliage and the character. Check the first reduction's input and output sizes, and read the final exposure and analyzer texels. | **Open.** The crop, light and weather coefficients, and the native rules for background, foliage and character coverage are traced. Near foliage and character coverage now pass independent GPU readback. Far-tree billboards and the native per-material shadow sampling still need independent implementation. [LightAnalyzer](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
 | Atmosphere and day/night | The same Hateno clear day and clear night views | Read the pre-shading fog and transmission at near and distant terrain, the main light direction and color, and the sky color before tone mapping. This gives per-view daylight and night reference values for the independent renderer. | **Complete for the JP v208 main view with the shipped atmosphere table.** The stock table load, scattering kernels and per-view palette-driven bake are traced. The independent bake passed the reference check on the decoded table. Its final brightness conversion remains fitted pending per-view values. [Sky LUT passes](wiiu-sky-resources.md#wii-u-v208-shipped-table-and-the-precompute-passes) |
 | Weather and seasons | Hateno rain and clear daylight, with exposed terrain or stone visible in both. Hebra with falling snow. | Read `rain_ratio`, the wetness value in the green channel of PreShading(Shadow), and the opaque HDR result at the same Hateno surfaces. In the Hebra frame, identify the precipitation draws and read the ground's actual material, wetness and lighting. | **Complete for stock JP v208 MainField terrain and outdoor weather, as static research.** The tile data already contains the snow material mix. Snowfall uses a separate effect path, while the deferred rain inputs decay toward dry. The traced terrain, forecast and palette paths have no independent seasonal selector. The independent forecast still approximates the cold transition. [Snow-covered terrain](weather.md#12-snow-covered-mainfield-terrain-in-jp-v208) |
@@ -230,10 +230,75 @@ With `a = error(TL) - error(BR)` and `b = error(BL) - error(TR)`, the shader add
 `(a + b, a - b)` to the bilinear fraction and clamps each axis to `[0, 1]`.
 
 The host applies this shift and bilinearly reads shadow, fog and diffuse
-where all four terrain taps exist. The original sampler state still needs
-verification. Where the host's terrain-only pre-shading leaves holes, the
-host keeps the nearest matching valid tap or recomputes at full resolution
-if all four taps lack terrain.
+where all four terrain taps exist. At holes in terrain-only pre-shading,
+the host keeps the nearest matching valid tap. If none is available, it
+recomputes visibility at the full-resolution receiver using the same
+half-depth grid.
+
+### SSAO depth and material boundaries
+
+**A receiver and its occluders are selected separately.** PS 128 runs
+for the field class and takes four samples of shared half-resolution
+scene depth. It never reads the materials at the four sampled positions.
+PS 112 applies that visibility to ambient light according to the
+receiving pixel's normal flag. The traced rocks and trunks set the flag.
+The traced grass variants clear it. Crown and distant foliage use the
+leaf path and opaque characters use their own material AO. A visible
+opaque or alpha-tested surface can still occlude the ground if it wrote
+camera depth before the reduction. The alpha test limits that effect to
+the surviving depth samples.
+
+The stock v208 translucent event at `0x039ab438` binds the existing
+pre-shading targets, including Expand, before `GBufferXlu(Invalidate)`
+at `0x039ab4d0` and the subsequent translucent draws at
+`0x039ab4e4` and `0x039ab50c`. Thus the late translucent water path
+consumes results from earlier stages. A material that writes depth in
+an earlier phase can affect AO at the shoreline. The depth and material
+of a given shoreline still depend on the draws in that view.
+
+**Reconstruction uses the guide footprint.** PS 32 gathers depth and
+mean-encoded-normal guides in its first texture clause. Those gathers
+have no material-ID lookup or per-tap material rejection. The shader
+reads reconstructed Shadow, Diffuse and Fog at the adjusted coordinate
+in its second texture clause. The v208 RPX constructs the six pre-shading
+target wrappers at `0x03976390` via `0x0397616c`. Their sampler is
+initialized at `0x03a82fcc` by `GX2InitSampler(Clamp, Linear)`.
+The target relinks at `0x039766e4` and `0x03978778` use
+`0x03a82dc8`, which copies the texture and leaves the sampler registers
+at wrapper offset `0x9c` intact. The translucent event installs pointers
+to those wrappers for the corresponding scene slots. This establishes
+the initial linear and clamp state. A replay can verify the bindings
+and any overrides at the actual draws.
+
+**Scope of the scene settings.** The shipped JP v208 `gsys.bgmsconf`
+names two configurations, `Main` and `UI`. Both carry a 0.5 SSAO width
+scale and clear `ssao_is_depth_full`; their deferred model names differ.
+The RPX registers those two SSAO parameters at `0x039b77fc` and
+`0x039b7848`. KSys looks up `DeferredMain` and `DeferredUI`
+separately at `0x034075a4` and `0x03407608`. The selection code at
+`0x038b315c` and `0x038b3290` changes models through an item-filter
+component. The existence of named alternate deferred models does not
+establish a shrine or indoor SSAO path. Per-scene configuration
+selection and overrides are still open.
+
+**Independent verification.** The deferred terrain path and forward
+field receivers now share the point-sampled half-depth grid, noise
+phase and outer-cascade cutoff. The forward path evaluates the kernel
+at the receiving fragment. The half-resolution material attachments
+and reconstruction still cover terrain only.
+
+In the 640×360 synthetic wall fixture, the deferred Vulkan replay
+(`Expand` EID 894) had five terrain samples at 158.66 m with blue
+251–252/255. With the wall removed at the same camera and projection
+(EID 861), those exact receiver depths stayed bit-identical and blue
+became 255/255. The CPU implementation of the four-tap formula using
+the recorded D32 depth and RG8 rotations reproduced every terrain
+sample's AO byte in both replays. In the wall replay, all 23,985 terrain
+samples at or beyond the configured 200 m cutoff were neutral.
+The forward wall draw (EID 860) bound the 640×360 scene depth and the same
+4×4 rotation texture. These captures used independent synthetic assets.
+
+### Half-resolution depth
 
 **SI-GBUF-05**. The JP v208 `Main` configuration enables half-resolution,
 32-bit normalized linear depth and disables `depth_reduce` and

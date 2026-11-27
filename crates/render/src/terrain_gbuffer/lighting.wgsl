@@ -8,7 +8,7 @@
 #import botw::clouds::{CloudParams, cloud_shadow}
 #import botw::look::{read_look_at, sky_cover, field_wetness_at, haze_terms}
 #import botw::deferred_light::{
-    FieldSurface, Frame, MainLight, field_shadow_range, game_frame, scene_depth, ssao_on_grid,
+    FieldSurface, Frame, MainLight, field_ssao, game_frame, scene_depth,
     main_light_source, field_surface_shadow, wet_field, sky_visibility, field_ambient_at, field_compose,
 }
 
@@ -83,13 +83,9 @@ fn field_vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) cod
     return FieldVertexOutput(vec4(xy, f32(code) / 255.0, 1.0), uv, code);
 }
 
-fn field_visibility(pixel: FieldPixel, light: MainLight, half_size: vec2<f32>) -> vec4<f32> {
+fn field_visibility(pixel: FieldPixel, light: MainLight) -> vec4<f32> {
     let pbr = pixel.pbr;
-    var ao = 1.0;
-    // PS 128 keeps AO active until the last cascade's visibility finishes fading.
-    if -pixel.frame.p.z < field_shadow_range(light.index) {
-        ao = ssao_on_grid(pixel.frame, ssao_noise, pbr.frag_coord.xy, half_size);
-    }
+    let ao = field_ssao(pixel.frame, ssao_noise, light.index);
     let sun = field_surface_shadow(light, pbr, pixel.frame.p.z);
     // Expand.x is sun visibility, .z is SSAO, and .w is neutral for terrain.
     return vec4(sun, 0.0, ao, 1.0);
@@ -128,7 +124,7 @@ fn expand(in: FieldVertexOutput) -> @location(0) vec4<f32> {
     }
     let light = main_light_source();
     if in.code == 4u {
-        return field_visibility(field_pixel(uv), light, half_size);
+        return field_visibility(field_pixel(uv), light);
     }
 
     let size = vec2<i32>(textureDimensions(scene_normals));
@@ -222,7 +218,7 @@ fn compose(in: FieldVertexOutput) -> @location(0) vec4<f32> {
             diffuse += weights[i] * textureLoad(half_diffuse, at, 0).rgb;
         }
     } else {
-        let full = shade_field(pixel, field_visibility(pixel, light, vec2(0.0)));
+        let full = shade_field(pixel, field_visibility(pixel, light));
         shadow = full.shadow;
         fog = full.fog.rgb;
         diffuse = full.diffuse.rgb;

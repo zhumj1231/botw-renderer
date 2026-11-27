@@ -355,9 +355,6 @@ fn ssao_rotation(noise: texture_2d<f32>, noise_coord: vec2<f32>) -> vec2<f32> {
 }
 
 fn ssao_sample_z(uv: vec2<f32>, half_size: vec2<f32>) -> f32 {
-    if half_size.x == 0.0 {
-        return scene_position(uv).z;
-    }
     // SI-GBUF-05: reconstruct the point-sampled half-depth grid from Bevy's depth prepass.
     let texel = clamp(floor(uv * half_size), vec2(0.0), half_size - 1.0);
     return scene_position((texel + 0.5) / half_size).z;
@@ -380,17 +377,22 @@ fn ssao_pair(uv: vec2<f32>, biased_z: f32, offset: vec2<f32>, k: f32, half_size:
 // The game's screen-space ambient occlusion at the pixel (1: open): four
 // depth samples in two directions turned by the noise, a fixed share of
 // the screen away.
-fn ssao_on_grid(frame: Frame, noise: texture_2d<f32>, frag: vec2<f32>, half_size: vec2<f32>) -> f32 {
+fn field_ssao(frame: Frame, noise: texture_2d<f32>, light_index: u32) -> f32 {
 #ifdef DEPTH_PREPASS
-    let use_half_depth = half_size.x > 0.0;
-    let forward_noise_coord = frag * (GAME_LINES / view.viewport.w) / 4.0;
-    let r = ssao_rotation(noise, select(forward_noise_coord, frame.uv * half_size, use_half_depth));
+    // PS 128 keeps AO active through the last cascade's shadow fade.
+    if -frame.p.z >= field_shadow_range(light_index) {
+        return 1.0;
+    }
+    let depth_size = textureDimensions(view_bindings::depth_prepass_texture);
+    let half_size = vec2<f32>(max(depth_size / 2u, vec2(1u)));
+    let noise_coord = clamp(frame.uv * half_size, vec2(0.0), half_size - 1.0);
+    let r = ssao_rotation(noise, noise_coord);
     let turn = mat2x2<f32>(r.x, r.y, -r.y, r.x);
     let aspect = vec2<f32>(view.viewport.w / view.viewport.z, 1.0);
     let a = turn * vec2<f32>(-0.0036606, 0.0364835) * aspect;
     let b = turn * vec2<f32>(0.0199001, 0.0019967) * aspect;
     // The original applies 0.995 to normalized depth, measured from the near plane.
-    let near_correction = select(0.0, 0.005 * view.clip_from_view[3][2], use_half_depth);
+    let near_correction = 0.005 * view.clip_from_view[3][2];
     let biased_z = 0.995 * -frame.p.z + near_correction;
     let open = 0.17764 * ssao_pair(frame.uv, biased_z, a, 14.70871, half_size)
         + 0.254544 * ssao_pair(frame.uv, biased_z, b, 10.9109, half_size);
@@ -398,10 +400,6 @@ fn ssao_on_grid(frame: Frame, noise: texture_2d<f32>, frag: vec2<f32>, half_size
 #else
     return 1.0;
 #endif
-}
-
-fn ssao(frame: Frame, noise: texture_2d<f32>, frag: vec2<f32>) -> f32 {
-    return ssao_on_grid(frame, noise, frag, vec2(0.0));
 }
 
 // --- The field: pre-shading (programs 112, 108) and main pass (32, 28) ---

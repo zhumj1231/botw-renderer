@@ -20,7 +20,7 @@
     view_transformations::{position_world_to_view, frag_coord_to_uv},
 }
 #import botw::look::{read_look_at, apply_haze, sky_cover, field_wetness_at}
-#import botw::deferred_light::{FieldSurface, field_color, game_frame, ssao}
+#import botw::deferred_light::{FieldSurface, field_color, field_ssao, game_frame, main_light_source}
 #endif
 #import botw::clouds::{CloudParams, cloud_shadow}
 
@@ -221,12 +221,7 @@ fn fragment(
     surface.metal = 0.0;
     surface.flag = 1.0;
     let frame = game_frame(position_world_to_view(world), frag_coord_to_uv(in.position.xy));
-    // The ambient occlusion only where it can change the ambient: past
-    // 150 m the game's ambient is the analyzer's sky alone.
-    var ao = 1.0;
-    if -frame.p.z < 150.0 {
-        ao = ssao(frame, ssao_noise, in.position.xy);
-    }
+    let ao = field_ssao(frame, ssao_noise, main_light_source().index);
     // The clouds' shadow on the land (the game's `gsys_projection0`).
     let shade = cloud_shadow(cloud_shadow_map, cloud_shadow_sampler, clouds, world);
     let cover = sky_cover(look_texture, look, world);
