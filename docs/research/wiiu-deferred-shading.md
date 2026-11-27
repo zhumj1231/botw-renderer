@@ -124,7 +124,7 @@ path while a row is open.
 | Topic | Capture | Question the capture can answer | Complete without a new capture? Evidence and blocker |
 | --- | --- | --- | --- |
 | Real-time shadows | Hateno clear | Read the drawn cascade count and depth map dimensions, the first two splits in `gsys_context[58].xy` and the current range from `gsys_environment[53].z + 20`. Cross-check against `[53].w + 40`. Read `gsys_environment[42].rgb` and compare it to the clock-derived weights, then inspect Expand red on the distant slope. | **Open.** The range calculation, history requirement, and far-shadow texture and clock weights are known. The code that enables the `0x20` range-adjustment flag still needs to be identified. [Field shadows](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
-| SSAO | Hateno clear | Read the depth and noise inputs at field PS 128, then inspect Expand blue and the terrain diffuse output at a ground contact and nearby open ground. This gives the AO pattern and diffuse values in those regions. | **Open.** The field kernel, noise, output and diffuse consumer are known. The independent renderer approximates the native half-depth input by sampling Bevy's depth prepass at half-grid centers. The native sample selection at depth edges still needs a source-level comparison. [AO formula](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
+| SSAO | Hateno clear | Verify the live depth and noise bindings at field PS 128 and read Expand blue and the terrain diffuse output at a ground contact and nearby open ground. | **Complete for Main terrain.** The native half-depth producer does one point sample across depth edges. The noise, four-tap kernel, diffuse input and cutoff at the current shadow range are traced. The independent terrain path follows the configured cascade range and passed an offscreen Vulkan readback. [AO formula](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
 | Indirect light | Hateno clear, cloudy, and clear at night | Read the red input to the first LightAnalyzer reduction, the dimensions of its input and first output, and the final exposure and analyzer texels. This establishes the actual reduction footprint and values for these views. | **Open.** The red-channel reduction, background value and shader consumers are known. Trace the input extent used to size the first native target and finish mapping which non-terrain materials write the red input. [LightAnalyzer](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
 | Atmosphere and day/night | The same Hateno clear day and clear night views | Read the pre-shading fog and transmission at near and distant terrain, the main light direction and color, and the sky color before tone mapping. This gives per-view daylight and night reference values for the independent renderer. | **Open.** The palette blend, main-light direction and sky-dome LUT sampling are traced. The filter kernels that generate the Rayleigh and Mie inputs to the scattering LUT are still unverified. [Sky LUT passes](wiiu-sky-resources.md) |
 | Weather and seasons | Hateno rain and clear daylight, with exposed terrain or stone visible in both | Read `rain_ratio`, the wetness value in the green channel of PreShading(Shadow), and the opaque HDR result at the same surfaces. In a separate cold-region frame with falling snow, identify the precipitation draws and record how the ground is shaded in that view. | **Open.** The weather palette blend, cold-climate precipitation selection and wet-surface shader are traced. The cold-region surface path still needs to establish whether snowfall changes terrain materials, and the time and climate code still needs to establish whether there is a separate seasonal input. [Weather and precipitation](weather.md) |
@@ -210,10 +210,19 @@ Red carries Bevy's sun-shadow visibility, blue carries the existing
 SSAO evaluated in linear view metres, and alpha is 1 for field terrain.
 Green is unused by this path. Pre-shading point-loads the same texel.
 The native format is recorded in the target descriptors below. The host
-uses Bevy-generated cascade maps, field shadow sampling and the existing
-150 m AO cutoff. Its
-full-resolution fallback evaluates visibility directly when the four
-half-resolution terrain taps are absent.
+uses Bevy-generated cascade maps and field shadow sampling. Terrain AO
+uses that light's outer cascade bound, with the existing 150 m cutoff
+as a fallback for views without a configured cascade. The composition
+pass evaluates visibility directly when the four half-resolution
+terrain taps are absent.
+
+The 640×360 offscreen flat-wall Vulkan comparison at the original
+camera position produced byte-identical Expand, class, and depth
+attachments before and after the range change. A second view placed the
+wall contact at about 158.7 m in view depth. Expand EID 894 had five field
+texels below neutral AO in the 150–200 m band, with minimum blue 251/255.
+All 23,985 field texels at or beyond 200 m were neutral. The fixture
+used synthetic noise rotations.
 
 With the same offscreen Vulkan invocation before and after the split, the
 1280×720 Hateno images changed by at most one code value per RGB channel.

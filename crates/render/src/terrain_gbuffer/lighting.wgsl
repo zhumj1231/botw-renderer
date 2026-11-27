@@ -8,7 +8,7 @@
 #import botw::clouds::{CloudParams, cloud_shadow}
 #import botw::look::{read_look_at, sky_cover, field_wetness_at, haze_terms}
 #import botw::deferred_light::{
-    FieldSurface, Frame, MainLight, game_frame, scene_depth, ssao_on_grid,
+    FieldSurface, Frame, MainLight, field_shadow_range, game_frame, scene_depth, ssao_on_grid,
     main_light_source, field_surface_shadow, wet_field, sky_visibility, field_ambient_at, field_compose,
 }
 
@@ -85,7 +85,8 @@ fn field_vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) cod
 fn field_visibility(pixel: FieldPixel, light: MainLight, half_size: vec2<f32>) -> vec4<f32> {
     let pbr = pixel.pbr;
     var ao = 1.0;
-    if -pixel.frame.p.z < 150.0 {
+    // PS 128 keeps AO active until the last cascade's visibility finishes fading.
+    if -pixel.frame.p.z < field_shadow_range(light.index) {
         ao = ssao_on_grid(pixel.frame, ssao_noise, pbr.frag_coord.xy, half_size);
     }
     let sun = field_surface_shadow(light, pbr, pixel.frame.p.z);

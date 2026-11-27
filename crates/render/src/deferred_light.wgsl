@@ -265,6 +265,17 @@ fn field_shadow_depth(depth: f32, cascade: u32) -> f32 {
     return saturate(depth + 0.002 + 0.0005 * f32(cascade));
 }
 
+fn field_shadow_range(light_index: u32) -> f32 {
+    if light_index < view_bindings::lights.n_directional_lights {
+        let light = &view_bindings::lights.directional_lights[light_index];
+        let count = (*light).num_cascades;
+        if count > 0u {
+            return (*light).cascades[count - 1u].far_bound;
+        }
+    }
+    return 150.0;
+}
+
 fn field_surface_shadow(light: MainLight, pbr: PbrInput, view_z: f32) -> f32 {
     if !receives_main_shadow(light, pbr) {
         return 1.0;
@@ -293,7 +304,7 @@ fn field_surface_shadow(light: MainLight, pbr: PbrInput, view_z: f32) -> f32 {
             visibility *= sample_shadow_map_hardware(previous.xy, field_shadow_depth(previous.z, cascade - 1u), index - 1);
         }
     }
-    let range = (*state).cascades[count - 1u].far_bound;
+    let range = field_shadow_range(light.index);
     let fade = saturate(0.05 * (-view_z - (range - 20.0)));
     return mix(visibility, 1.0, fade);
 }

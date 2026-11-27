@@ -129,7 +129,8 @@ Expand.x = sat(lerp(W⁴, Sh, sat(sm2.z + 1 − sat(0.05(z − e53.w))))·depth_
         If i > 0 and the mean is below 1, multiply by one center comparison
         from cascade i − 1.
   W  = dot(gsys_dynamic_reflection(X·0.0001 + 0.5, Z·0.000125 + 0.5).rgb, e42.rgb)
-Expand.z = AO (for z < e53.z, otherwise 1); Expand.w = 1; Expand.y = uking_tex1
+Expand.z = AO (while the shadow fade is below 1, otherwise 1)
+Expand.w = 1; Expand.y = uking_tex1
 ```
 
 In JP v208 PS 128, groups 29–32 choose the cascade using the two view-depth
@@ -217,6 +218,22 @@ AO = 1 − sat((0.17764·pair A + 0.254544·pair B − 0.4321855)·6)
 ```
 
 In meters `(far − near)·Δ ≈ 0.995·z₀ − z_i`: `t` grows by 1 per 6.8 cm (A) and 9.2 cm (B) of the protrusion, the sample further than 1.2 m forward is replaced by the addition of the opposite (`u`). `0.4321855 = 0.17764 + 0.254544` - the open surface gives 0. The radius is constant **on the screen** (3.7% and 2% of the frame height), there is no blur (noise 4×4 remains in AO).
+
+JP v208 PS 128 computes `fade = sat(0.05 * (z − e53.z))` in ALU group 18.
+Group 25 enables the block with the four AO taps only while `fade < 1`.
+The else block writes 1 to Expand blue. Since `e53.z` is the current
+shadow range minus 20 m, AO stays active through the fade band and ends
+at the current outer range.
+
+In the v208 `Main` profile, `depth_reduce` and `ssao_is_depth_full` are
+disabled. `NLD(half)` comes from `render_buffer_depth` variant 24 in
+`common.sharcb`. In PS 109, the only texture operation point-samples
+`cDepth` at the half-grid pixel center. If that value is `d`, the pass
+writes `d` to half hardware depth and `a / (1 − d * b) − a` to R32F
+normalized linear depth, where `a = near / (far − near)` and
+`b = 1 − near / far`. This selects one input texel even across a depth
+edge. The neighboring PS 113 variant contains a four-texel gather and
+belongs to the separate `DEPTH_MAX` permutation. [Depth pass setup](wiiu-sky-resources.md#reduced-cloud-buffer-gsys-wii-u-v208-2026-10-01)
 
 ### PS 112: pre-shading relief
 
