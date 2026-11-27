@@ -366,6 +366,48 @@ The separate billboard replay above verified class-6 coverage.
 A native replay at the requested views can read the draw-time sampler
 state and the resulting Expand and analyzer values.
 
+#### Live class-7 foliage in frame 3830
+
+Wii U JP v208, Cemu 1.26.2f Vulkan, zero graphics packs. Use the same
+[frame 3830 capture](wiiu-field-shading.md#live-terrain-material-sample-in-frame-3830)
+and read RT0 as raw RG8. Pixel History and before/after buffers identify
+two distinct writers:
+
+| Full-resolution pixel | Last RT0 writer | Pass and inputs | RT0 before → after |
+| --- | ---: | --- | --- |
+| (579, 287) | 4000 | 2,340 indices. PS3 samples BC3 sRGB 256×256 and discards when its alpha is below the bound alpha-test reference. D32 write on, LessEqual. | `04 00` → `07 00` |
+| (205, 233) | 4176 | 948 indices. PS3/PS4/PS5 sample BC1 sRGB 200×200, BC1 UNORM 100×100 and BC4 UNORM 200×200. D32 write off, Equal. | `04 00` → `07 40` |
+
+EID 5774 reads full-resolution RT0.R, applies a bit mask, and writes
+the result as half-resolution D16 depth. It maps these samples to
+`(289,143)` and `(102,116)`. Read the active 640×360 viewport of
+resource 12332, whose backing image in this replay is 640×368.
+For 13,309 half-resolution cells with class 7 in all four corresponding
+full-resolution neighbors at EID 5773, every half-resolution result is
+D16 `1542 = 6 * 257`. The mask `7 & 0x0e` removes the low bit for
+this pass.
+
+The two sample cells pass D16 Equal at Expand EID 9953. Its shadow
+sampler is `sampler2DArrayShadow` on PS7, with albedo, normal and
+half-depth on PS1, PS2 and PS5. This independently matches the static
+foliage writer's slot layout. The raw RGBA8 Expand output changes from
+`ff 1d fb ff` and `ff 1d ff fc`, respectively, to `ff 00 ff ff`
+at both cells in resource 12397. Pixel History shows pre-shading EID
+11015 passing depth at both cells. These particular samples have red
+visibility 1. They establish routing and the bound depth array, while
+numeric PCF checks need partially shadowed samples.
+
+Full-resolution classification at EID 12831 stores D16
+`1799 = 7 * 257` at both original pixels. EID 12860 uses Equal and
+changes their raw R11G11B10F HDR words from zero to `0x619a9b47` and
+`0x5dd9ab5f`. Compare direct readbacks at EID 12859 and 12860, since
+Pixel History misses this write in the replay. Thus the low-bit mask
+groups the samples for half-resolution lighting while full-resolution
+composition still selects raw class 7. The exact object names and
+native permutation keys of these two writers remain open.
+
+
+
 #### Independent renderer
 
 The same half-resolution Expand pass routes near leaf meshes and far

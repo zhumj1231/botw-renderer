@@ -121,17 +121,61 @@ RT3.a  = (4 * floor(63.75 * g) + 1) / 255
 The same `t` blends old and fresh albedo and encoded normal RGB. The
 direct-write branch sets RT1.A to zero and packs fresh gloss with flag 1
 in RT3.A. This is consistent with the three nonzero RT1.A observations.
-The capture binds the images for both reading and writing in the
-Cemu-translated draw. The Wii U mechanism that exposes the prior values,
-the exact role of `k`, and the input surface underlying the
-three samples still need verification.
+**Previous writer.** Pixel History on RT1 (resource 12428) identifies EID
+3529 as the last passing draw before EID 5681 at all three pixels. EID
+3529 writes the same G-buffer attachments and hardware depth, draws
+2,952 indices, and binds BC1 sRGB 256×128 at PS3 and BC1 UNORM 128×64 at
+PS4. The old class is already 4 and the old RT1.A is 252 at all three
+positions. This identifies the draw and its bindings. The exact object
+and native material variant are open.
+
+**Measured weights.** In the translated program the slope is
+`k = lerp(min(kTex, kView), kTex, s^4)` with these inputs:
+
+```text
+kTex  = 1.66666662693 * (1 + 8 * (1 - q))
+kView = 20 / (-Sem3.z * C[17].y)
+q     = saturate(dot(a, b))
+s     = saturate(1.25 * nBlendZ)
+```
+
+For replay, in the SPIRV-Cross disassembly with Vulkan semantics follow
+lines 600–619, 637–641, 682–683 and 699–715. The four-value dot inputs at
+line 600 are `(R11.x,R13.y,R11.z,R4.x)` and
+`(R6.w,R6.y,R126.x,R4.y)`. The blended component `nBlendZ` is the
+third multiply-add in lines 561–609. This mapping gives the translated
+arithmetic while keeping the native material parameter names open.
+
+In RenderDoc 1.38, replace only the EID 5681 fragment program for the
+diagnostic replay. The round-trip control (SPIR-V → Vulkan GLSL → SPIR-V,
+unmodified logic) preserves the three raw MRT samples byte for byte.
+In separate replacements, keep RT1 intact and encode FP32 `k` or
+`delta = (dScene - dTerrain) * C[16].x` in RT3 RGBA8. Encode `w`
+as UNORM16 across RT0 RG. A third replacement reads the `k` inputs and
+shows `s = 1` at all three points within UNORM16 precision. In this
+sample the result follows `kTex`. Coverage of the unsaturated
+`s < 1` case is open.
+
+| Full-resolution x (y = 401) | Depth delta (scene units) | Measured k (inverse scene units) | Computed w | Predicted RT1.A byte | Original RT1.A byte |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 534 | 0.01456734 | 3.931102 | 0.05726570 | 240 | 240 |
+| 536 | 0.00215942 | 3.911929 | 0.00844749 | 252 | 252 |
+| 537 | 0.00460550 | 3.902688 | 0.01797381 | 248 | 248 |
+
+The measured UNORM16 weights agree with `saturate(k * delta)` within
+`6.1e-6`. The old `RT3.A & 2` is zero on all three pixels, so
+`t = w`. At this draw the measured slope corresponds to a blend span
+of roughly 0.25 scene units. Use the raw checkpoints for the blend.
+Pixel History's isolated `shaderOut` returns alpha zero at EID 5681
+even where its post-event value agrees with the actual buffer.
 
 The class-4 composition at EID 12855 samples the same albedo and normal
-resources after terrain and records the final HDR composition separately.
-The independent terrain G-buffer currently sets RT1.A to zero. It covers
-the direct packing case and needs the conditional blend when the original
-behavior is aligned. Verify where the branch runs and how it reads the
-prior values before implementing it.
+resources after terrain and writes the final HDR composition. The
+independent terrain path covers the direct packing case with RT1.A zero.
+A faithful blend requires a readable prior depth and material state at
+the terrain draw. The native Wii U mechanism for prior-buffer access,
+the native shader permutation and a suitable independent scheduling
+strategy remain open.
 
 **G-buffer objects** (`uking_mat`, variant `gsys_assign_gbuffer`, `gsys_weight` −1/0 - without scanning; family of programs found `material_variants.py`, variant - by `word[51]` key, Cemu - `matches.json`; read 2026-09-28):
 

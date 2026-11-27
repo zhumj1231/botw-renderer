@@ -102,12 +102,14 @@ with the event map as a reference for matching pipeline state.
 
 ## Continue here
 
-1. **Trace representative materials.** Start from the
+1. **Trace representative materials.** Frame 3830 establishes the
+   [terrain overlap weights](docs/research/wiiu-field-shading.md#live-terrain-material-sample-in-frame-3830)
+   and the [foliage route](docs/research/wiiu-character-shading.md#live-class-7-foliage-in-frame-3830)
+   through masked Expand and raw class-7 HDR. Trace Link skin, cloth and
+   equipment next using the
    [material variant mapping](docs/research/wiiu-material-variants.md).
-   [Terrain EID 5681](docs/research/wiiu-field-shading.md#live-terrain-material-sample-in-frame-3830)
-   now establishes the live slots and the conditional G-buffer blend. Resolve
-   the blend weight and check a leaf, skin and equipment through texture decoding,
-   shader selection, G-buffer writes and final HDR. Cite each program and update the
+   Match the native terrain permutation and verify prior-buffer access
+   before scheduling the independent blend. Update the
    [capture checklist](docs/research/wiiu-deferred-shading.md#original-wii-u-capture-checklist).
 2. **Compare live lighting inputs with the original.** Use a matched
    Wii U JP v208 Hateno view. Confirm cascade splits and depth texture,
