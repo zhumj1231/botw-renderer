@@ -107,12 +107,16 @@ second_split = lerp(first_split, far_target, state[0x38])
 state[0x50] = current_far
 ```
 
-The range guard is assembled at `0x038a5b18–0x038a5b6c`; `flags` is the
-16-bit field at `state + 0xa`. The routine stores the second split from
-the target range and uses the current range for the last split and the
-two environment fade starts. The higher-level source of the adjustment
-flag and the actual distances for Hateno still need verification. The
-archived Cemu capture
+The range guard is assembled at `0x038a5b18–0x038a5b6c`. The 16-bit flags
+are at `state + 0xa`. The bytes are the length and capacity of the view
+history. The constructor at `0x038a5314–0x038a531c` sets them to 0 and 3.
+The reset at `0x038a5458` clears the length, and the history update at
+`0x038a57e8–0x038a58cc` shifts the saved view records and increases the
+length up to the capacity. Range adjustment requires that history to be
+full. The routine stores the second split from the target range and uses
+the current range for the last split and the two environment fade starts.
+The source of the adjustment flag and the actual distances for Hateno
+still need verification. The archived Cemu capture
 [shows three 720 × 720 maps](wiiu-deferred-shading.md).
 
 ```text
@@ -143,8 +147,44 @@ places it in user sampler slot 8, mapped to `gsys_dynamic_reflection`.
 In `Bootup_Graphics.pack`, `Model/SystemModel.sbfres` assigns the
 material's `shadow` sampler to `solar_irradiation`. The matching
 `SystemModel.Tex2.sbfres` contains that 2000 × 1600 BC1 texture (GX2
-format `0x31`) with two mip levels. The source of the live `e42.rgb`
-weights remains open.
+format `0x31`) with two mip levels.
+
+#### Far shadow weights by time of day
+
+JP v208 `0x0365aa10` reads the effective time angle through
+`0x03661b00` and computes `h = (angle / 360) * 24` in hours. The clock
+getter normally returns `TimeMgr+0x98` and can select `+0x9c` in a separate
+game state. The RGB result is passed to `0x0340a728`, which writes it
+to KSys view 0's environment extension at offsets `0x110–0x118`.
+[The custom payload starts at UBO offset 0x190](wiiu-water-variants.md#layout-and-ksys-extension),
+so these are the RGB lanes of `gsys_environment[42]`.
+
+```python
+def far_shadow_weights(h):
+    if 5.5 <= h < 19.5:
+        center, width = 12.5, 7.0
+    elif 19.5 <= h < 22.085 or 2.0 <= h < 3.085:
+        return (0.0, 0.0, 1.0)
+    elif h >= 22.085 or h < 2.0:
+        if h < 2.0:
+            h += 24.0
+        center, width = 24.042499542236328, 1.9575004577636719
+    else:
+        return (1.0, 0.0, 0.0)
+    red = min(1.0, max(0.0, (center - h) / width))
+    blue = min(1.0, max(0.0, (h - center) / width))
+    return (red, 1.0 - (red + blue), blue)
+```
+
+This describes the curve for effective clock hours in `[0, 24)`. Use
+single-precision operations and constants to reproduce the native
+arithmetic. The weights are about `(0.357, 0.643, 0)` at 10:00,
+`(0, 1, 0)` at 12:30, `(0, 0.5, 0.5)` at 16:00, and
+`(0.533, 0.467, 0)` at 23:00. There is an abrupt channel switch at the
+22.085 h threshold and another at 3.085 h. A local interpretation of the
+PowerPC arithmetic and branches agreed with the single-precision form at
+4,120 clock angles, including points around the thresholds. Values bound
+by a live Hateno draw are still unmeasured.
 
 The independent field path uses the static Main split distances of 32,
 64 and 200 m and a 2 m near plane. The shader reads Bevy's projected
