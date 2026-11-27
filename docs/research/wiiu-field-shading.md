@@ -28,6 +28,13 @@ Options (manifest): PS 128 `direct_shadow_calc`, `direct_shadow_pcf=1`, `enable_
 
 **G-buffer relief** (PS `583ea8604da62310`, read): `albedo.a = floor(63.75·m)·4/255` - bits 0-1 = 0, metal in bits 2-7; `normal.w = floor(63.75·gl)·4/255 + 1/255` - **bit 0 = 1** (flag), gloss in bits 2-7. `gl` is mixed from the blue channel `MaterialCmb` of two dot materials (`t10.z`) with corrections that are not disassembled. Albedo Flag = 0, so `out.a = 0` in PS 32 and mixing does not change the result.
 
+JP v208 `uking_terrain` program 9 binds `MaterialCmb` to pixel slot 10.
+ALU groups 39 and 45 decode its red and green as
+`(255·c − 128) / 127` (`0x40008102`, `0xbf810204`). This maps byte 128
+to a flat tangent-space slope. The terrain shader uses these constants
+for the material maps in both lighting paths. The G-buffer normal
+itself uses a separate `2·c − 1` encoding.
+
 **G-buffer objects** (`uking_mat`, variant `gsys_assign_gbuffer`, `gsys_weight` −1/0 - without scanning; family of programs found `material_variants.py`, variant - by `word[51]` key, Cemu - `matches.json`; read 2026-09-28):
 
 | Material (model) | Programme | Cemu PS |

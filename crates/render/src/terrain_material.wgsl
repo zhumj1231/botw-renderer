@@ -77,7 +77,9 @@ fn sample_material(index: u32, p: Projection) -> Surface {
     let layer = i32(entry.z);
     let albedo = textureSampleGrad(albedo_array, albedo_sampler, uv, layer, p.ddx * scale, p.ddy * scale).rgb;
     let n = textureSampleGrad(normal_array, normal_sampler, uv, layer, p.ddx * scale, p.ddy * scale).rgb;
-    return Surface(albedo, n.rg * 2.0 - 1.0, n.b);
+    // Native MaterialCmb decoding centres a flat slope at 128/255.
+    let slope = n.rg * bitcast<f32>(0x40008102u) + bitcast<f32>(0xbf810204u);
+    return Surface(albedo, slope, n.b);
 }
 
 fn mix_surface(a: Surface, b: Surface, t: f32) -> Surface {
