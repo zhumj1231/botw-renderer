@@ -654,3 +654,81 @@ ripple-like noise comes from `p`/`q` in Shadow.y.
 The dry/wet equality checks (12 inputs per pair) are the evidence that no
 other term differs; the inputs were random, so branches never reached by
 real data were exercised, but no frame was rendered.
+
+## 12. Snow-covered MainField terrain in JP v208
+
+### Material data in Hebra and Hateno
+
+`Terrain/A/MainField.tscb` selects the areas by world position and LOD.
+The terrain loader selects the `.mate` member by tile and resource kind
+at `0x036d3248`. Each 256×256 member stores two material IDs and a blend
+byte per texel. The material names come from the `MaterialAlb` metadata
+in `Model/Terrain.Tex1.sbfres`. The material bank includes powder snow,
+bumpy snow, snow-covered cliff and rock, and a snow-and-stone mix.
+
+Measured two 500×500 m squares at the same 125 m tile size (LOD 7).
+Both have 16 selected tiles and 1,048,576 decoded texels. The installed
+v208 overlay was checked first for each archive. Both selections resolved
+to the base terrain files. The area and climate names below were obtained
+at the tile centers using the ecosystem map.
+
+| Sample | Bounds in world X/Z | Area and climate | Material mix |
+| --- | --- | --- | --- |
+| Hebra | X [−3500, −3000), Z [−3250, −2750) | `HeburaMountains`, `HebraFrostClimate` on all 16 tiles | 66.83% weight in the six snow-named materials, including 60.58% `Snow_SnowPowder_A` |
+| Hateno | X [3375, 3875), Z [1875, 2375) | `EastHateru`, `HateruPlainClimate` on all 16 tiles | 1.30% weight in the same materials, with `Plant_GreenGrassField_A` the largest contributor at 47.82% |
+
+The weights count `255 - blend` for the first ID and `blend` for the
+second. They describe archived material weights at the chosen LOD.
+For reproduction, take the LOD 7 tile centers inside each square,
+clear the low two bits of each Morton index to get its `.mate.sstera`
+group, and count only the members selected by the TSCB. The Hebra
+group stems are `5700000C38`, `5700000C3C`, `5700000C90`, and
+`5700000C94`.
+
+### Runtime paths for precipitation, terrain and the clock
+
+- The weather calculation at `0x03667f34–0x03667f80` and
+  `0x03668028–0x03668068` uses the cold test at `0x03666048` to switch
+  rain to snow and heavy rain or thunder rain to heavy snow. The cold test
+  accepts the computed temperature or the alternate temperature at
+  `TempMgr + 0x50` at or below −2 °C (constant `0x1030213c`).
+  ELink selects the near and far snow particles by the effect temperature
+  and precipitation concentration, as in §3.1.
+- For snow states 4 and 5, `0x03668624–0x036688e0` moves `rain_ratio`
+  and `rainfall` toward zero at 0.025 per 30 Hz frame. KSys
+  `0x034087bc` uploads these values and selects a subsequent lighting
+  variant from `rain_ratio`. This is the path for residual wetness
+  when rain turns to snow.
+- The native terrain pixel shader reads the two material IDs from
+  `tera_material` and samples `MaterialAlb` and `MaterialCmb`. See
+  [terrain material inputs](wiiu-field-shading.md#terrain-mesh-transitions-and-material-inputs).
+  JP v208 `gsys_assign_gbuffer` programs 9–11, 27–29, 45–47 and 63–65
+  in model 0 and 9–11 in model 1 were checked in both stages. Their ALU
+  clauses do not read scene-material bank 10. The geometry path uses the
+  loaded tile materials. The weather uniforms control later wetness and
+  lighting, and the snow effect draws particles separately.
+- The forecast selects the current climate by world position and a
+  four-hour band using `TimeMgr + 0x98`. At `0x03667ddc–0x03667e5c`
+  the day counter at `TimeMgr + 0x11c` is reduced modulo seven to
+  detect the next day and advance the three-day forecast. The
+  [palette update](wiiu-render-cpu.md#main-light-env5-and-the-palettes-exposure)
+  uses time-of-day, climate and sky state. The traced MainField
+  material, forecast and palette paths have no separate seasonal selector.
+
+These are the stock MainField terrain and outdoor weather paths. The
+exact material bindings, wetness, particle coverage and lighting for
+a specific Wii U frame still require that frame. The independent
+forecast still uses a single climate-temperature estimate and a
+threshold below 0 °C. The original −2 °C test with its second temperature
+input is a known implementation difference.
+
+### Independent renderer check
+
+A separate 500×500 m terrain-only bake around the `Dungeon046` marker
+was rendered with a fixed camera and time (10:00, 640×360) on Vulkan.
+The forced clear, snow and rain replays produced byte-identical
+G-buffer class, albedo and normal attachments. Pre-shading wetness was
+zero in clear and snow. Rain wrote 20,945 nonzero half-resolution texels
+to the wetness channel, with a maximum byte value of 125. This fixture
+isolates the terrain and its lighting. Particle draws are outside the
+fixture.
