@@ -144,16 +144,40 @@ replaced with 3 before the halving loop. The constructor at
 `0x038b38dc–0x038b3904` initializes the two scales to `0.8` and `0.25`
 from RPX constants `0x103314d0` and `0x103314d4`. With those defaults,
 640×360 Expand starts the loop at 128×90, and the first draw targets
-64×45 while sampling the original Expand. The first dimensions follow
-from the code and defaults. Any configuration override and the live
-target dimensions still need verification.
+64×45 while sampling the original Expand. KSys constructs the analyzer
+at `0x034071e8` and initializes its per-view resources at `0x0340720c`.
+The two floats at analyzer `+0x3a8/+0x3ac` are initialized outside the
+named `ksysla` parameter registrations. The traced initialization and
+update path keeps the constructor values.
+
+`0x038b4974–0x038b4994` also uploads the width scale as `cAnalyzeScale`.
+VS 478 applies `u = 0.5 + (u - 0.5) * cAnalyzeScale`, leaving `v`
+unchanged. Thus the first draw samples the central 80% of Expand's
+width. VS 480 and 482 pass the whole preceding level through. PS 483
+applies `cForceShadowRatio` at the final reduction.
 
 The `preshading_shadow_clear` material selects class 0. Its JP v208
 PS 132–135 binaries are identical and export `(1, 1, 1, 1)` to Expand.
 The reduction shader has one red-channel sample per output pixel with no
 material test. Background pixels written by that pass therefore count as
-full visibility. Field, foliage and character shadow variants supply their
-own red values before the reduction.
+full visibility. The original half-resolution class buffer packs
+`(material_id & 0x0e) / 255` into D16. The four Expand materials in JP
+v208 `Bootup_Graphics.pack / Model/SystemModel.sbfres` use the following
+comparison values and depth tests. The depth-function bits of their
+material state words are 2 for Equal and 3 for LessEqual.
+
+| Expand material | Test against half-resolution class | Red output |
+| --- | --- | --- |
+| `preshading_shadow_clear` | 0, Equal | 1 |
+| `preshading_shadow_field` | 4, Equal | Filtered cascade and baked-world visibility |
+| `preshading_shadow_field_leaf` | 6, Equal | Filtered cascade visibility, including foliage with raw ID 7 after masking |
+| `preshading_shadow_chara` | 8, LessEqual | Character visibility, including masked classes 8, 10, 12 and 14 |
+
+The character triangle writes depth `8/255`, so it passes wherever the
+stored class is at least 8. This accounts for the character variants
+classified separately at full resolution. The table gives the shader
+writes selected by those material states. The original frame still
+provides the scene-specific coverage and resource values.
 
 ```text
 e     = (cExposure·main.w)³,  avg = luma(cCubeMap2D)
