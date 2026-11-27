@@ -9,7 +9,7 @@
 #import botw::look::{read_look_at, sky_cover, field_wetness_at, haze_terms}
 #import botw::deferred_light::{
     FieldSurface, Frame, MainLight, game_frame, scene_depth, ssao_on_grid,
-    main_light_source, field_shadow, wet_field, sky_visibility, field_ambient_at, field_compose,
+    main_light_source, field_surface_shadow, wet_field, sky_visibility, field_ambient_at, field_compose,
 }
 
 @group(2) @binding(0) var albedo: texture_2d<f32>;
@@ -88,7 +88,7 @@ fn field_visibility(pixel: FieldPixel, light: MainLight, half_size: vec2<f32>) -
     if -pixel.frame.p.z < 150.0 {
         ao = ssao_on_grid(pixel.frame, ssao_noise, pbr.frag_coord.xy, half_size);
     }
-    let sun = field_shadow(light, pbr, pixel.frame.p.z, 1.0, pixel.surface.translucent);
+    let sun = field_surface_shadow(light, pbr, pixel.frame.p.z);
     // Expand.x is sun visibility, .z is SSAO, and .w is neutral for terrain.
     return vec4(sun, 0.0, ao, 1.0);
 }

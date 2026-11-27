@@ -73,7 +73,7 @@ what is beneath the surface.
 | Input | Source and remaining work |
 | --- | --- |
 | Indirect light and exposure | Native `LightAnalyzer` reduces `Expand.x` and samples the environment cube. The result controls ambient brightness and saturation. The host now reduces the view's visibility into the second channel of its shared cube-mean texture. Terrain, forward field materials, characters and particles use the same value. [Native reduction and exposure](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
-| SSAO and dynamic shadow | Native field PS 128 uses half normalized linear depth, a noise-rotated AO footprint and a dynamic shadow range. The host writes its existing AO and Bevy cascade visibility into Expand. Terrain ambient reads the AO from that texture. [Field visibility and AO](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
+| SSAO and dynamic shadow | Native field PS 128 uses half normalized linear depth, a noise-rotated AO footprint and a dynamic shadow range. The host writes its existing AO and filtered visibility from three Bevy-generated cascades into Expand. Terrain ambient reads the AO from that texture. [Field visibility and AO](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
 | Sky, day/night and weather | The host uses the baked area and time-of-day palettes, separate sun and moon paths, cloud shadows, fog scattering and a shared look texture. Regional climate and temperature drive the forecast, including conversion of rain to snow in the cold. Rain and snow also feed the effect system. An independent seasonal input has yet to be traced. [Weather and precipitation](weather.md) · [Sky resources](wiiu-sky-resources.md) |
 
 When terrain deferred lighting is active, Expand contributes the field's
@@ -185,7 +185,8 @@ Red carries Bevy's sun-shadow visibility, blue carries the existing
 SSAO evaluated in linear view metres, and alpha is 1 for field terrain.
 Green is unused by this path. Pre-shading point-loads the same texel.
 The native format is recorded in the target descriptors below. The host
-still uses Bevy's cascade lookup and the existing 150 m AO cutoff. Its
+uses Bevy-generated cascade maps, field shadow sampling and the existing
+150 m AO cutoff. Its
 full-resolution fallback evaluates visibility directly when the four
 half-resolution terrain taps are absent.
 

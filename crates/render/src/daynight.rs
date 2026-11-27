@@ -33,9 +33,7 @@ use asset_format::texture::Texture;
 use bevy::asset::{load_internal_asset, uuid_handle};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::light::atmosphere::{PhaseFunction, ScatteringMedium};
-use bevy::light::{
-    CascadeShadowConfig, CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver, SunDisk,
-};
+use bevy::light::{CascadeShadowConfig, NotShadowCaster, NotShadowReceiver, SunDisk};
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
 use bevy::prelude::*;
@@ -975,17 +973,13 @@ pub fn update_sky_state(
 #[derive(Component)]
 pub struct MainLight;
 
-/// Shadows near the player sharp, far terrain still shadowed.
-// SI-LGT-05: Bevy shadow cascades, not the game's cascades and baked world shadow.
+/// Static JP v208 Main profile. The native scene can update the bounds at runtime.
 fn cascades() -> CascadeShadowConfig {
-    CascadeShadowConfigBuilder {
-        num_cascades: 4,
-        minimum_distance: 0.3,
-        first_cascade_far_bound: 20.0,
-        maximum_distance: 600.0,
-        overlap_proportion: 0.2,
+    CascadeShadowConfig {
+        bounds: vec![32.0, 64.0, 200.0],
+        overlap_proportion: 0.0,
+        minimum_distance: 2.0,
     }
-    .build()
 }
 
 fn spawn_lights(mut commands: Commands) {

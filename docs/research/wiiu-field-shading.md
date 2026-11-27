@@ -99,12 +99,38 @@ draw.
 Expand.x = sat(lerp(W⁴, Sh, sat(sm2.z + 1 − sat(0.05(z − e53.w))))·depth_shadow_scale
                + depth_shadow_off)
   Sh = lerp(pcf, 1, sat(0.05(z − e53.z)))) shadow attenuation for e53.z
-  pcf - 4 samples of the cascade (ctx[58].xy - cascade boundaries, matrix ctx[42+4i..]),
-        normal displacement 0.0791·(1 − (N·L)2)·nl and 0.0005·cascade;
-        if the mean <1 is still a sample of the adjacent cascade, the product
+  pcf - 4 comparison samples of cascade i (ctx[58].xy - cascade boundaries,
+        matrix ctx[42+4i..]). Each UV axis is offset by half a shadow texel.
+        Compare depth is biased by −0.002 − 0.0005·i after projection.
+        If i > 0 and the mean is below 1, multiply by one center comparison
+        from cascade i − 1.
   W  = dot(gsys_dynamic_reflection(X·0.0001 + 0.5, Z·0.000125 + 0.5).rgb, e42.rgb)
 Expand.z = AO (for z < e53.z, otherwise 1); Expand.w = 1; Expand.y = uking_tex1
 ```
+
+In JP v208 PS 128, groups 29–32 choose the cascade using the two view-depth
+splits. Groups 51–62 apply the four comparison offsets, groups 63–82 sample
+the previous cascade conditionally, and ALU groups 18 and 92 fade the
+dynamic visibility to 1 over the final 20 m. The normal offset in groups
+39–44 uses a reconstructed depth-neighborhood normal and the encoded surface
+normal. The far world shadow still comes from the separate baked term above.
+
+The independent field path uses the static Main split distances of 32,
+64 and 200 m and a 2 m near plane. The shader reads Bevy's projected
+shadow maps, applies the four comparison offsets, conditionally multiplies
+by the previous map inside its projection, and fades to 1 from 180 to
+200 m. The compare bias is positive for reverse Z. Bevy still supplies
+the normal offset and projection matrices. Its power-of-two shadow maps
+and comparison sampler are used for this path. The native dynamic range,
+normal reconstruction, sampler state and baked far shadow are pending.
+
+In the 640×360 flat-wall Vulkan fixture, Expand EID 1350 read three
+2048×2048 D32 layers with far bounds 32, 64 and 200 m. Receiver samples
+inside the shadow returned zero on both sides of the first two splits.
+The red channel through the far fade matched the depth-derived formula to
+within one 8-bit code value and reached 1 beyond 200 m. This fixture also
+rendered through the forward entry. Hateno's clear terrain capture exercised
+the same deferred path with baked terrain and objects.
 
 **SSAO** ( `enable_direct_ssao` option, read). Noise - `uking_tex0` = texture of `ssao` (`SystemModel.Tex2`, 4×4 R8G8, unit vectors of `(cos θ, sin θ) = 2·(R, G) − 1`), target coordinate `uv·(W, H)/8` (VS `Sem6`). Four samples of half depth of `d` around the center of `d₀`:
 

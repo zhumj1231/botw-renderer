@@ -21,6 +21,7 @@
     lighting::LAYER_BASE,
     clustered_forward as clustering,
     shadows,
+    shadow_sampling::sample_shadow_map_hardware,
     pbr_types::PbrInput,
     view_transformations::{direction_world_to_view, position_ndc_to_view},
 }
@@ -235,18 +236,66 @@ fn main_light_source() -> MainLight {
     return light;
 }
 
-fn field_shadow(light: MainLight, pbr: PbrInput, view_z: f32, clouds: f32, translucent: f32) -> f32 {
-    if translucent > 0.5 && !LEAF_SHADOW_FROM_MAP {
-        return clouds;
-    }
+fn receives_main_shadow(light: MainLight, pbr: PbrInput) -> bool {
     let receives = (pbr.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u;
     if receives && view_bindings::lights.n_directional_lights > 0u {
         let flags = view_bindings::lights.directional_lights[light.index].flags;
-        if (flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u {
-            return clouds * shadows::fetch_directional_shadow(light.index, pbr.world_position, pbr.world_normal, view_z, pbr.frag_coord.xy);
-        }
+        return (flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u;
+    }
+    return false;
+}
+
+fn field_shadow(light: MainLight, pbr: PbrInput, view_z: f32, clouds: f32, translucent: f32) -> f32 {
+    if (translucent <= 0.5 || LEAF_SHADOW_FROM_MAP) && receives_main_shadow(light, pbr) {
+        return clouds * shadows::fetch_directional_shadow(light.index, pbr.world_position, pbr.world_normal, view_z, pbr.frag_coord.xy);
     }
     return clouds;
+}
+
+fn field_shadow_coord(light_index: u32, cascade_index: u32, pbr: PbrInput) -> vec4<f32> {
+    let light = &view_bindings::lights.directional_lights[light_index];
+    let texel_size = (*light).cascades[cascade_index].texel_size;
+    let normal_offset = (*light).shadow_normal_bias * texel_size * pbr.world_normal;
+    let point = pbr.world_position + vec4(normal_offset, 0.0);
+    return shadows::world_to_directional_light_local(light_index, cascade_index, point);
+}
+
+fn field_shadow_depth(depth: f32, cascade: u32) -> f32 {
+    // PS 128 subtracts this bias in forward shadow depth. Bevy uses reverse Z.
+    return saturate(depth + 0.002 + 0.0005 * f32(cascade));
+}
+
+fn field_surface_shadow(light: MainLight, pbr: PbrInput, view_z: f32) -> f32 {
+    if !receives_main_shadow(light, pbr) {
+        return 1.0;
+    }
+    let state = &view_bindings::lights.directional_lights[light.index];
+    let cascade = shadows::get_cascade_index(light.index, view_z);
+    let count = (*state).num_cascades;
+    if cascade >= count {
+        return 1.0;
+    }
+    let coord = field_shadow_coord(light.index, cascade, pbr);
+    if coord.w == 0.0 {
+        return 1.0;
+    }
+    let texel = 0.5 / vec2<f32>(textureDimensions(view_bindings::directional_shadow_textures));
+    let depth = field_shadow_depth(coord.z, cascade);
+    let index = i32((*state).depth_texture_base_index + cascade);
+    var visibility = 0.25 * (
+        sample_shadow_map_hardware(coord.xy + texel, depth, index) +
+        sample_shadow_map_hardware(coord.xy - texel, depth, index) +
+        sample_shadow_map_hardware(coord.xy + vec2(texel.x, -texel.y), depth, index) +
+        sample_shadow_map_hardware(coord.xy + vec2(-texel.x, texel.y), depth, index));
+    if cascade > 0u && visibility < 1.0 {
+        let previous = field_shadow_coord(light.index, cascade - 1u, pbr);
+        if previous.w > 0.0 {
+            visibility *= sample_shadow_map_hardware(previous.xy, field_shadow_depth(previous.z, cascade - 1u), index - 1);
+        }
+    }
+    let range = (*state).cascades[count - 1u].far_bound;
+    let fade = saturate(0.05 * (-view_z - (range - 20.0)));
+    return mix(visibility, 1.0, fade);
 }
 
 fn main_light(pbr: PbrInput, view_z: f32) -> MainLight {
@@ -482,7 +531,12 @@ fn field_compose(pbr: PbrInput, s: FieldSurface, frame: Frame, light: MainLight,
 
 fn field_color(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao: f32, cover: f32, means: texture_2d<f32>, rain: vec2<f32>, overcast: f32) -> vec3<f32> {
     let light = main_light_source();
-    let S = field_shadow(light, pbr, frame.p.z, shadow, s_in.translucent);
+    var S: f32;
+    if s_in.leaf > 0.5 {
+        S = field_shadow(light, pbr, frame.p.z, shadow, s_in.translucent);
+    } else {
+        S = shadow * field_surface_shadow(light, pbr, frame.p.z);
+    }
     let vis = sky_visibility(cover, pbr.world_position.y, s_in.N.y, s_in.flag, -frame.p.z);
     let ambient = field_ambient_at(s_in, -frame.p.z, ao, vis, means);
     let s = wet_field(s_in, -pbr.V, rain);
