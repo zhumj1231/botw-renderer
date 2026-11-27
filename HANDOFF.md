@@ -91,7 +91,9 @@ cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesk
   when making a numerical comparison.
 
 The original reference is Wii U JPN v208 in Cemu 1.26.2f with Vulkan and
-zero graphics packs, frame 3830. Keep its observations separate from the
+zero graphics packs, frame 3830 at 17:40 in Tarrey Town. The
+[paired scene recipe](docs/research/wiiu-paired-tarrey-3830.md) records
+the camera and HDR extraction. Keep its observations separate from the
 renderer A/B. The checked-in [deferred pipeline notes](docs/research/wiiu-deferred-shading.md)
 contain the original event map, attachment formats, measurements and
 approximations. The [field shader notes](docs/research/wiiu-field-shading.md)
@@ -101,6 +103,13 @@ be privately transferred if needed, or a fresh zero-pack frame can be used
 with the event map as a reference for matching pipeline state.
 
 ## Continue here
+
+The first matched visual pair is in
+[the Tarrey Town checkpoint](docs/research/wiiu-paired-tarrey-3830.md).
+Resolve the original house and rock visibility condition in cell I-3
+before measuring full-scene color. Next, compare distant-slope fog with
+the paired camera and use the captured HDR input to isolate the display
+curve. The weather replays are additional validation scenes.
 
 1. **Close the outdoor clear-day baseline.** Use frame 3830 for the
    [terrain shadow and SSAO readbacks](docs/research/wiiu-deferred-shading.md#clear-day-terrain-expand-at-eid-9949).

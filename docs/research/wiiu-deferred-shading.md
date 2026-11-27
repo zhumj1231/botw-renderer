@@ -64,8 +64,8 @@ set 1 binding 7 (`uniformBlockPS1`) and the environment from binding
 | `gsys_environment[42].rgb` | (0, 0.26175392, 0.73824608), consistent with about 17:40 from the traced clock curve |
 
 The second split matches `7.790757 + 0.15 * (120 - 7.790757)` within
-float precision. The displayed clock time was not independently
-measured in this replay. The fragment program binds the comparison
+float precision. The presented frame displays 17:40. The fragment
+program binds the comparison
 array at PS8 and baked shadow at PS15.
 
 Read resource 12397 (RGBA8 UNORM) before and after the draw and resource
@@ -129,7 +129,8 @@ Both captures are Wii U JP v208 in Cemu 1.26.2f Vulkan with zero
 graphics packs. The two frames were taken in one session while the
 character stood still. Frame 4188 is about 17:30 and frame 12902 is
 about 22:20, as read on the game HUD. The saved location is Tarrey
-Town. The Hateno capture at frame 3830 remains a separate baseline.
+Town. Frame 3830 is a separate Tarrey Town capture at a different
+camera position. See the [camera and comparison setup](wiiu-paired-tarrey-3830.md).
 
 Match the translated field Expand fragment program by byte digest
 across frame 4188 EID 10327 and frame 12902 EID 8677. Context vectors
@@ -305,8 +306,8 @@ Keep the captures local.
 
 ## Experimental terrain lighting
 
-Capture both modes with the same Hateno preset, time, weather and
-1280×720 resolution recorded for the Wii U reference:
+Capture both independent renderer modes with the same Hateno preset,
+time, weather and 1280×720 resolution:
 
     cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesky --resolution 1280x720 --screenshot captures/terrain-forward.png
     cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesky --resolution 1280x720 --terrain-deferred --screenshot captures/terrain-deferred.png

@@ -73,7 +73,9 @@ positions. Whole-frame savings and hardware traffic require measurement.
 ## Baseline for repeated comparison
 
 The shared frame reference is Wii U JP v208, Cemu 1.26.2f Vulkan, RenderDoc
-1.38, zero active graphics packs, frame 3830. The capture records 1280×720
+1.38, zero active graphics packs, frame 3830 in Tarrey Town. The
+[paired-camera setup](wiiu-paired-tarrey-3830.md) records the exact
+reference pose and projection. The capture records 1280×720
 geometry and 640×360 pre-shading. The observed three color attachments use
 10 logical bytes per pixel, or 14 with camera D32. That describes attachment
 storage. The reference has no controlled performance comparison. Use the
