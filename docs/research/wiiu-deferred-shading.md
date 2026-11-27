@@ -764,6 +764,50 @@ Not established: face size (config gsys `+0xcc4`, filled with a list of paramete
 
 **viewer** (`crates/the original renderer/src/cubemap.rs`, with a dump): six chambers of faces on its layer of drawing (relief, objects with a `gsys_cube_map`, dome of sky and clouds), one face per frame from the camera position, near 0.1 and far 300 m; faces are copied into a cube, levels build a Bevy filter`GeneratedEnvironmentMapLight`) instead of the Gaussian chain; the light of the faces is a copy of the sun and moon without shadows. RENDER-004 (archived reference)The choice of shadows. CUBEMAP-001 (archived reference).
 
+### Live face refresh across consecutive Wii U frames
+
+Nine stock JP v208 frames were captured with Cemu 1.26.2f Vulkan
+and zero graphics packs. The RenderDoc 1.38 Target Control requests
+returned three consecutive frame numbers for each input condition.
+The three input conditions were recorded at different world positions.
+
+Find the cubemap at terrain composition PS8. In all nine captures
+it is the 64×64 R11G11B10F resource with four mips and six faces
+(`tex_3d1ee800_fmt0816`). Inspect draw attachment slices and the
+destination subresources on copies. The observed sequence is:
+
+| Input condition | Frames | Mip 0 faces written in frame order |
+| --- | --- | --- |
+| Character and camera stationary | 85916–85918 | (2,3) → (4,5) → (0,1) |
+| Right stick only | 97432–97434 | (0,1) → (2,3) → (4,5) |
+| Left stick only | 100801–100803 | (2,3) → (4,5) → (0,1) |
+
+Every frame issued six copies into mips 1–3 of its two faces before
+the terrain composition read. In the stationary sequence, SHA-256
+of all 24 face/mip subresources at composition is identical to the
+next frame's initial state at both boundaries. Some writes reproduce
+the same bytes. Count the writes independently of content changes.
+The render-to-mip-0 source cube observed at frame 85917 renders
+face 0. At frame 85918, it renders face 1. It has a separate schedule
+from the terrain reader's two-face update. At frame 85917 a further
+cube receives six mip-3 copies, one per face.
+
+Read `environment[31]` in the field Expand context and apply
+`environment[43..45]` to recover the corresponding center in world
+space. This vector is used by the water parallax correction. In the
+stationary triplet, the view vectors and reconstructed center are
+constant. During the right-stick triplet, the camera changes its
+orientation and position, while that reconstructed center moves
+less than 2 mm. Across the left-stick triplet, the camera translates
+about 6 cm with the direction vector unchanged, and the center moves
+less than 0.1 mm. The center differs between the three locations.
+
+These samples establish an ongoing partial update and persistence
+across frames in this view. The raw capture-camera transforms and
+the timing and trigger for recentering over a longer displacement
+remain open. See the static center trace and cubemap draw path above.
+Keep the raw captures and per-subresource hashes local.
+
 ## Pre-shading fog (PS 140, read in Cemu GLSL)
 
 Cemu `59cba7eb9a9c1df6` (programs 140/142/143). Blocks: `uf_blockPS1` - context, `uf_blockPS6` - environment, `uf_blockPS10` - 4 vec4 (scene material or material; not matched). The same constants (2/π, −0.85, 25, 0.001, 0.005, 2.5) are in the PS sheets 108 (`fb2e18ae56397ca7`) and characters 104, so this is the **general fog of the** scene, not just water. Native-check was not done.
