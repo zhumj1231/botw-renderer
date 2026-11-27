@@ -87,6 +87,7 @@ usage: render [options]
   --terrain-gbuffer  show the experimental terrain G-buffer and class depths
   --terrain-deferred  shade the main view's terrain through the experimental G-buffer
   --screenshot <png>  once the world has loaded, save a frame and exit
+  --freeze-animation keep the scene clock at startup time (requires --screenshot)
   --renderdoc      capture the same offscreen frame when launched by RenderDoc
                    (Windows, requires --screenshot)
   --character <name>  stand a baked character (characters/<name>.ron, e.g.
@@ -124,6 +125,7 @@ struct Args {
     profile: bool,
     terrain_gbuffer: Option<terrain_gbuffer::TerrainGBuffer>,
     screenshot: Option<PathBuf>,
+    freeze_animation: bool,
     renderdoc: bool,
     /// A character to stand where the camera looks, and its clip.
     character: Option<String>,
@@ -150,6 +152,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         profile: false,
         terrain_gbuffer: None,
         screenshot: None,
+        freeze_animation: false,
         renderdoc: false,
         character: None,
         clip: "Nml_Wait".into(),
@@ -190,6 +193,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--terrain-gbuffer" => args.terrain_gbuffer = Some(terrain_gbuffer::TerrainGBuffer::Preview),
             "--terrain-deferred" => args.terrain_gbuffer = Some(terrain_gbuffer::TerrainGBuffer::Lighting),
             "--screenshot" => args.screenshot = Some(value()?.into()),
+            "--freeze-animation" => args.freeze_animation = true,
             "--renderdoc" => args.renderdoc = true,
             "--character" => args.character = Some(value()?),
             "--clip" => args.clip = value()?,
@@ -197,6 +201,9 @@ fn parse_args() -> Result<Option<Args>, String> {
             "-h" | "--help" => return Ok(None),
             _ => return Err(format!("unknown option {arg}")),
         }
+    }
+    if args.freeze_animation && args.screenshot.is_none() {
+        return Err("--freeze-animation requires --screenshot".into());
     }
     if args.renderdoc && args.screenshot.is_none() {
         return Err("--renderdoc requires --screenshot".into());
@@ -433,6 +440,7 @@ fn main() -> AppExit {
     if let Some(path) = args.screenshot.clone() {
         app.add_plugins(capture::CapturePlugin {
             path,
+            freeze_animation: args.freeze_animation,
             #[cfg(windows)]
             renderdoc: args.renderdoc,
         });

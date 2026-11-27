@@ -122,8 +122,10 @@ the half-pixel ray. The host evaluates AO directly in pre-shading with
 linear view metres and has no separate Expand target.
 
 The D16 classification identifies the field pixels for comparisons.
-Separate screenshots fix the sun and weather, while cloud shadows still
-advance with the runtime clock.
+Use `--freeze-animation` for renderer A/B screenshots. It leaves the
+scene clock at startup while asset loading and capture still advance.
+At 1280×720, two separate Hateno captures with the same camera, time and
+weather produced byte-identical PNGs with this option.
 
 ### Capturing the same frame on Windows
 
@@ -135,7 +137,7 @@ and choose local output paths.
 ```powershell
 $env:WGPU_BACKEND = "vulkan"
 New-Item -ItemType Directory -Force captures | Out-Null
-renderdoccmd capture -w -c captures/hateno ./render.exe --assets assets-hateno --place hateno --time 10:00 --weather bluesky --resolution 1280x720 --terrain-deferred --screenshot captures/hateno.png --renderdoc
+renderdoccmd capture -w -c captures/hateno ./render.exe --assets assets-hateno --place hateno --time 10:00 --weather bluesky --resolution 1280x720 --terrain-deferred --freeze-animation --screenshot captures/hateno.png --renderdoc
 ```
 
 In the 1280×720 Hateno validation capture, geometry used EID 34439,

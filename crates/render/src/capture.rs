@@ -27,6 +27,7 @@ mod renderdoc;
 
 pub struct CapturePlugin {
     pub path: PathBuf,
+    pub freeze_animation: bool,
     #[cfg(windows)]
     pub renderdoc: bool,
 }
@@ -35,6 +36,9 @@ impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
         // The game's draws differ every session; shots repeat.
         app.insert_resource(crate::clouds::GlobalRandom::fixed());
+        if self.freeze_animation {
+            app.world_mut().resource_mut::<Time<Virtual>>().pause();
+        }
         // The shot waits for the water to have the sky's clouds: with the
         // world wind they move every frame, so while waiting the water
         // takes them every frame; the
@@ -42,6 +46,7 @@ impl Plugin for CapturePlugin {
         app.insert_resource(WaterFollow { interval: 0.0 });
         app.insert_resource(Capture {
             path: self.path.clone(),
+            freeze_animation: self.freeze_animation,
             settled_frames: 0,
             state: State::Waiting,
             target: Handle::default(),
@@ -70,6 +75,7 @@ const TIMEOUT_SECS: f32 = 120.0;
 #[derive(Resource)]
 struct Capture {
     path: PathBuf,
+    freeze_animation: bool,
     settled_frames: u32,
     state: State,
     /// What the main view draws into.
@@ -128,6 +134,11 @@ fn capture(
         exit.write(AppExit::error());
         return;
     }
+    let elapsed = if capture.freeze_animation {
+        real.elapsed_secs()
+    } else {
+        time.elapsed_secs()
+    };
     match capture.state {
         State::Waiting => {
             let settled = world.pending().is_empty();
@@ -136,8 +147,8 @@ fn capture(
             } else {
                 0
             };
-            let timed_out = time.elapsed_secs() > TIMEOUT_SECS;
-            let ready = capture.settled_frames >= SETTLED_FRAMES && time.elapsed_secs() > MIN_SECS;
+            let timed_out = elapsed > TIMEOUT_SECS;
+            let ready = capture.settled_frames >= SETTLED_FRAMES && elapsed > MIN_SECS;
             if ready || timed_out {
                 if timed_out {
                     warn!(
@@ -163,7 +174,7 @@ fn capture(
                 "shot: {} tiles resident, {} loading, {:.1} s",
                 stats.resident,
                 stats.loading,
-                time.elapsed_secs()
+                elapsed
             );
             follow.interval = 0.0;
             capture.state = State::Settling;
