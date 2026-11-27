@@ -64,6 +64,75 @@ each of four `.mate` neighbors before filtering. Reproducing the native
 blend first requires recovering the construction of the two bound terrain
 textures and checking their channels in an original replay.
 
+#### Live terrain material sample in frame 3830
+
+Verified on 2026-11-27 in Wii U JP v208, Cemu 1.26.2f Vulkan, with zero
+graphics packs. Frame 3830 is identified in the
+[frame overview](wiiu-deferred-shading.md#hateno-terrain-buffer-diagnostic).
+Use `botw-wiiu-v208-zero-packs_frame3830.rdc`, SHA-256
+`f0c0730e552a006a107d156dddce9944ee19a5c44fb2160f990e10823f96f124`.
+EID 5681 is an indexed draw with 1,563 indices and depth writes enabled.
+EID 5523 uses the same main terrain arrays and pixel slots with a different
+translated program. The large material arrays also appear in other shaders,
+so array identity alone is insufficient to recognize a terrain draw.
+
+| EID 5681 shader input | Captured image | Read in the shader or associated static study |
+| --- | --- | --- |
+| PS7 | Resource 14337, RGBA8 UNORM, 512×512×8, one mip | `tera_material`. R/G supply the two material IDs. |
+| PS8 | Resource 14730, RGBA8 UNORM, 512×512×8, one mip, also bound to VS1 | `tera_normal`. Read by both stages. The pixel shader uses it in the geometric normal and blend path. |
+| PS9 | Resource 20806, BC1 sRGB, 1024×1024×83, 11 mips | `MaterialAlb`. Two per-material albedo layers are sampled. |
+| PS10 | Resource 20823, BC1 UNORM, 512×512×83, 10 mips | `MaterialCmb`. R/G are slopes and B contributes to the gloss term. |
+| VS0 | Resource 14504, R16 UNORM, 1024×1024×8, four mips | Height array. The active coordinate and slice values still need tracing. |
+| PS0, PS1 | Resources 12428 and 12400, the Albedo and Normal G-buffer images | The translated fragment program reads both at the screen position in the conditional blend branch. |
+
+The array names come from the JP v208 static archive mapping above. The
+live SPIR-V independently confirms the slots, texture formats, `floor(255c+0.5)`
+material ID decoding and the byte-128 slope constants. Its SHA-256 is
+`25a5cd5b53bc72ed53fe470a5f86ec9ad8642dd9a94b41fba9710f3efb44feac`.
+This identifies the translated program from the captured draw. The exact
+Latte permutation key for EID 5681 still needs a native byte match.
+
+Export RT0, RT1, RT3 and D32 at EID 5680 and 5681. Compare slot 1 as raw RGBA8
+bytes and D32 as raw depth values. Of the **12,062 pixels** where albedo or
+depth changed, all wrote class 4 in RT0.R and all had low two bits `01`
+in RT3.A. RT1.A was zero in 12,059 pixels. The other three changed from
+252 to 240, 248 and 252 respectively, one pixel each. The output byte of
+252 stayed the same at the third pixel while albedo RGB or depth changed.
+
+The translated fragment program explains why the terrain may preserve some
+previous material data. Its base weight is
+`w = saturate(k * (dScene - dTerrain) * C[16].x)`, where
+`dScene = PS3.r` and `dTerrain = -(Sem3.z + C[14].x) * C[15].x`.
+Read `C` from Vulkan binding 8, `uniformBlockPS1_var`, in the replay.
+EID 5681 binds `C[14].xy = (1, 25000)`, `C[15].x ≈ 1/24999`, and
+`C[16].x = 24999`. For this view the depth difference is therefore
+scaled back into scene units before applying the remaining per-pixel
+factor `k`. Given old encoded normal `N0` and old albedo `A0`, the shader
+uses:
+
+```text
+t      = saturate(w + (uint(255 * N0.a) & 2))
+m0     = (uint(255 * A0.a) & 252) / 252
+RT1.a  = 4 * floor(63.75 * m0 * (1 - t)) / 255
+g      = lerp(N0.a, freshGloss, t)
+RT3.a  = (4 * floor(63.75 * g) + 1) / 255
+```
+
+The same `t` blends old and fresh albedo and encoded normal RGB. The
+direct-write branch sets RT1.A to zero and packs fresh gloss with flag 1
+in RT3.A. This is consistent with the three nonzero RT1.A observations.
+The capture binds the images for both reading and writing in the
+Cemu-translated draw. The Wii U mechanism that exposes the prior values,
+the exact role of `k`, and the input surface underlying the
+three samples still need verification.
+
+The class-4 composition at EID 12855 samples the same albedo and normal
+resources after terrain and records the final HDR composition separately.
+The independent terrain G-buffer currently sets RT1.A to zero. It covers
+the direct packing case and needs the conditional blend when the original
+behavior is aligned. Verify where the branch runs and how it reads the
+prior values before implementing it.
+
 **G-buffer objects** (`uking_mat`, variant `gsys_assign_gbuffer`, `gsys_weight` −1/0 - without scanning; family of programs found `material_variants.py`, variant - by `word[51]` key, Cemu - `matches.json`; read 2026-09-28):
 
 | Material (model) | Programme | Cemu PS |

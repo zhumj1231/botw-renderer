@@ -104,9 +104,10 @@ with the event map as a reference for matching pipeline state.
 
 1. **Trace representative materials.** Start from the
    [material variant mapping](docs/research/wiiu-material-variants.md).
-   Trace terrain, foliage, skin and equipment through texture decoding,
-   shader selection, G-buffer writes and final HDR. Cite the capture and
-   program for each case and update the
+   [Terrain EID 5681](docs/research/wiiu-field-shading.md#live-terrain-material-sample-in-frame-3830)
+   now establishes the live slots and the conditional G-buffer blend. Resolve
+   the blend weight and check a leaf, skin and equipment through texture decoding,
+   shader selection, G-buffer writes and final HDR. Cite each program and update the
    [capture checklist](docs/research/wiiu-deferred-shading.md#original-wii-u-capture-checklist).
 2. **Compare live lighting inputs with the original.** Use a matched
    Wii U JP v208 Hateno view. Confirm cascade splits and depth texture,
