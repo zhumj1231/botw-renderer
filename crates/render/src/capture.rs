@@ -18,7 +18,7 @@ use bevy::ui::IsDefaultUiCamera;
 use bevy::window::PrimaryWindow;
 
 use crate::camera::MainView;
-use crate::ready::WorldReady;
+use crate::ready::{ReadySystems, WorldReady};
 use crate::terrain::TerrainStats;
 use crate::water_material::WaterFollow;
 
@@ -52,7 +52,7 @@ impl Plugin for CapturePlugin {
             target: Handle::default(),
         })
         .add_systems(PostStartup, render_offscreen)
-        .add_systems(Last, capture);
+        .add_systems(Last, capture.after(ReadySystems));
         #[cfg(windows)]
         if self.renderdoc {
             renderdoc::install(app);
@@ -69,8 +69,8 @@ const MIN_SECS: f32 = 3.0;
 /// Frames drawn after loading before the shot; their mean frame time is
 /// logged (the overlay's FPS is a smoothed value of the same frames).
 const MEASURED_FRAMES: u32 = 300;
-/// Give up waiting after this many seconds.
-const TIMEOUT_SECS: f32 = 120.0;
+/// Wall-clock limit for each readiness wait.
+const TIMEOUT_SECS: f64 = 120.0;
 
 #[derive(Resource)]
 struct Capture {
@@ -113,7 +113,7 @@ enum State {
     /// Loaded; frames drawn since and the real time they started at.
     Measuring(u32, f64),
     /// Measured; the water catching up with the clouds again.
-    Settling,
+    Settling(f64),
     Requested,
     Saved(u32),
 }
@@ -134,6 +134,7 @@ fn capture(
         exit.write(AppExit::error());
         return;
     }
+    let now = real.elapsed_secs_f64();
     let elapsed = if capture.freeze_animation {
         real.elapsed_secs()
     } else {
@@ -147,24 +148,20 @@ fn capture(
             } else {
                 0
             };
-            let timed_out = elapsed > TIMEOUT_SECS;
             let ready = capture.settled_frames >= SETTLED_FRAMES && elapsed > MIN_SECS;
-            if ready || timed_out {
-                if timed_out {
-                    warn!(
-                        "still loading {:?}; taking the shot anyway",
-                        world.pending()
-                    );
-                }
-                capture.state = State::Measuring(0, real.elapsed_secs_f64());
+            if ready {
+                capture.state = State::Measuring(0, now);
                 follow.interval = WaterFollow::default().interval;
+            } else if now >= TIMEOUT_SECS {
+                error!("capture: readiness timed out; pending {:?}", world.pending());
+                exit.write(AppExit::error());
             }
         }
         State::Measuring(frames, start) if frames < MEASURED_FRAMES => {
             capture.state = State::Measuring(frames + 1, start);
         }
         State::Measuring(frames, start) => {
-            let mean = (real.elapsed_secs_f64() - start) / f64::from(frames);
+            let mean = (now - start) / f64::from(frames);
             info!(
                 "frames after loading: {:.2} ms mean ({:.1} fps) over {frames}",
                 mean * 1000.0,
@@ -177,10 +174,14 @@ fn capture(
                 elapsed
             );
             follow.interval = 0.0;
-            capture.state = State::Settling;
+            capture.state = State::Settling(now);
         }
-        State::Settling => {
+        State::Settling(start) => {
             if !world.pending().is_empty() {
+                if now - start >= TIMEOUT_SECS {
+                    error!("capture: settling timed out; pending {:?}", world.pending());
+                    exit.write(AppExit::error());
+                }
                 return;
             }
             capture.state = State::Requested;
@@ -213,6 +214,50 @@ fn capture(
             }
             info!("saved {}", capture.path.display());
             exit.write(AppExit::Success);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::ready::ReadyPlugin;
+
+    #[test]
+    fn unresolved_terrain_exits_after_the_readiness_deadline() {
+        for state in [State::Waiting, State::Settling(1.0)] {
+            let mut app = App::new();
+            let mut real = Time::<Real>::default();
+            real.advance_by(Duration::from_secs(2));
+            app.add_plugins(ReadyPlugin)
+                .insert_resource(real)
+                .init_resource::<Time>()
+                .init_resource::<TerrainStats>()
+                .init_resource::<WaterFollow>()
+                .insert_resource(Capture {
+                    path: PathBuf::new(),
+                    freeze_animation: true,
+                    settled_frames: 0,
+                    state,
+                    target: Handle::default(),
+                })
+                .add_systems(Last, capture.after(ReadySystems));
+
+            app.update();
+            assert!(app.should_exit().is_none());
+            assert!(app
+                .world()
+                .resource::<WorldReady>()
+                .pending()
+                .contains(&"terrain tiles"));
+
+            app.world_mut()
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_secs(120));
+            app.update();
+            assert!(app.should_exit().is_some_and(|exit| exit.is_error()));
         }
     }
 }
