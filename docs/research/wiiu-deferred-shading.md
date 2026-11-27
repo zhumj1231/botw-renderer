@@ -166,6 +166,15 @@ replayed image at the screenshot copy (EID 39561) matched all 2,764,800
 RGB bytes of the saved PNG. Keep the capture and game-derived images
 outside source control.
 
+Terrain composition precedes Bevy's main opaque pass. Grass blades have a
+custom vertex shader and skip the standard depth prepass. Composing after
+the opaque pass overwrote blades in pixels classified as terrain. In the
+paired 1280×720 Hateno clear captures, 476,630 pixels that differed from
+forward rendering before the change matched the forward RGB afterward.
+The corrected Vulkan frame composed terrain at EID 31679, before the
+main opaque draws at EID 31700 and later. These are independent renderer
+captures.
+
 In an earlier 1600×900 Hateno Vulkan verification frame, both terrain
 paths drew in the same frame. Comparing class-4 pixels in HDR before and
 after composition (EIDs 45256 and 45270) gave a mean absolute difference

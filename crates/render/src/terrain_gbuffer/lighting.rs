@@ -6,9 +6,7 @@ use bevy::core_pipeline::core_3d::{Opaque3d, main_opaque_pass_3d};
 use bevy::core_pipeline::schedule::{Core3d, Core3dSystems};
 use bevy::ecs::system::{SystemParamItem, lifetimeless::SRes};
 use bevy::pbr::deferred::DeferredLightingLayout;
-use bevy::pbr::{
-    DrawMaterial, MeshPipelineKey, MeshViewBindGroup, ViewKeyCache, main_transmissive_pass_3d,
-};
+use bevy::pbr::{DrawMaterial, MeshPipelineKey, MeshViewBindGroup, ViewKeyCache};
 use bevy::prelude::*;
 use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::render::render_asset::RenderAssets;
@@ -53,12 +51,9 @@ impl Plugin for TerrainLightingPlugin {
             .add_systems(
                 Core3d,
                 (
-                    prepare_lighting
-                        .after(draw_geometry)
-                        .before(main_opaque_pass_3d),
-                    draw_lighting
-                        .after(main_opaque_pass_3d)
-                        .before(main_transmissive_pass_3d),
+                    prepare_lighting.after(draw_geometry).before(draw_lighting),
+                    // Deformed grass skips the prepass and draws over the lit terrain.
+                    draw_lighting.before(main_opaque_pass_3d),
                 )
                     .in_set(Core3dSystems::MainPass),
             );
