@@ -27,7 +27,7 @@ fn reduce(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 fn resolve() -> @location(0) vec4<f32> {
     let sample = textureSampleLevel(visibility, linear_sampler, vec2(0.5), 0.0);
     let light = read_look(look_texture).light[0];
-    // Alpha weights the pixels supplied by the terrain and background passes.
+    // Alpha preserves the coverage of pixels with a visibility sample.
     let share = select(light.z, sample.r / max(sample.a, 1e-6), sample.a > 0.0);
     return vec4(0.0, saturate(share) * saturate(light.y), 0.0, 0.0);
 }

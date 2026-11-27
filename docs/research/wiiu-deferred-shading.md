@@ -76,18 +76,17 @@ what is beneath the surface.
 | SSAO and dynamic shadow | Native field PS 128 uses half normalized linear depth, a noise-rotated AO footprint and a dynamic shadow range. The host writes its existing AO and filtered visibility from three Bevy-generated cascades into Expand. Terrain ambient reads the AO from that texture. [Field visibility and AO](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
 | Sky, day/night and weather | The host uses the baked area and time-of-day palettes, separate sun and moon paths, cloud shadows, fog scattering and a shared look texture. Regional climate and temperature drive precipitation. The traced MainField paths use authored snow terrain, temperature-dependent snowfall and time-of-day palettes. [Weather and precipitation](weather.md) · [Sky resources](wiiu-sky-resources.md) |
 
-When terrain deferred lighting is active, Expand contributes the field's
-shadow-map visibility and writes 1 where class 0 has no scene depth. For
-opaque pixels outside the host G-buffer, the reduction carries zero
-weight. The first LightAnalyzer draw samples the central 80% of Expand
-in X. Its target size comes from the native 0.8 width and 0.25 overall
+When terrain deferred lighting is active, Expand contributes shadow-map
+visibility for terrain, visible leaf meshes and character materials. It
+writes 1 where class 0 has no scene depth. Opaque pixels without a supported
+class carry zero weight. The first LightAnalyzer draw samples the central
+80% of Expand in X. Its target size comes from the native 0.8 width and 0.25 overall
 scales followed by the first halving. Linear downsampling carries red
 visibility and alpha weight through those levels, then samples their
 center and divides.
 The result is weighted by the main-light switch and lightning ratio
 (`cMainLightColor.w`). Views without Expand use full visibility and the
-same ratio. Foliage and characters still need Expand coverage in the
-independent path.
+same ratio.
 
 The archived independent 640×360 Hateno Vulkan replays still used full
 width and the former clear-sky weight. The half-sized input contained
@@ -120,6 +119,30 @@ All five levels matched the bilinear reference within 0.0027 in red and
 alpha. The last level scales red by the weather ratio and keeps alpha
 as the coverage weight.
 
+A 640×360 Hateno Vulkan replay at clear 10:00 used camera
+`3592.7,278.0,2150.0,0,-19`. In the 320×180 Expand input, class 6 supplied
+3,889 leaf samples with full weight. Of those, 2,849 had red below 1.
+The GPU resolved 0.7241. The CPU reference resolved 0.7237 from the same
+input and 0.7672 when the leaf samples were excluded. Read-back red and
+alpha at each reduction level were within 0.0037 of the bilinear reference.
+
+At the closer Hateno camera `3592.7,268.0,2122.0,0,-25` with
+`--character link`, direct DX12 GPU readback confirmed character
+coverage under three lighting conditions. All class-8 samples had full
+weight. The last column recomputes the same input with zero weight for
+those samples. Red and alpha at every reduction level matched the CPU
+bilinear reference within 0.0038.
+
+| Case | Class-8 samples | GPU resolved share | CPU reference without class 8 |
+| --- | ---: | ---: | ---: |
+| Clear 10:00 | 477 | 0.9634 | 0.9710 |
+| Cloudy 10:00 | 487 | 0.4946 | 0.4986 |
+| Clear 23:00 | 487 | 0.00586 | 0.00592 |
+
+At the more distant camera, 20 character samples were written to Expand.
+Removing them left the resolved share unchanged at that camera's
+reduction sample positions.
+
 Frozen day/night and weather cases can exercise this path with the existing
 baked region. The independent path completed the 1280×720 Hateno night
 case at 23:00 and the forced snow case at 10:00. The latter showed the
@@ -143,7 +166,7 @@ path while a row is open.
 | --- | --- | --- | --- |
 | Real-time shadows | Hateno clear daylight | Read the drawn cascade count and depth map dimensions, the first two splits in `gsys_context[58].xy` and the current range from `gsys_environment[53].z + 20`. Cross-check against `[53].w + 40`. Read `gsys_environment[42].rgb` and compare it to the clock-derived weights, then inspect Expand red on the distant slope. | **Complete for stock JP v208 Main terrain, as static research.** The traced main-view state leaves the history-based range guard off, while the scene preset and runtime offsets still determine the splits and fade starts. The field shader's cascade sampling and baked far-shadow blend are traced. The independent renderer still uses Bevy cascade maps and configured distances. [Field shadows](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
 | SSAO | Hateno clear | Verify the live depth and noise bindings at field PS 128 and read Expand blue and the terrain diffuse output at a ground contact and nearby open ground. | **Complete for Main terrain.** The native half-depth producer does one point sample across depth edges. The noise, four-tap kernel, diffuse input and cutoff at the current shadow range are traced. The independent terrain path follows the configured cascade range and passed an offscreen Vulkan readback. [AO formula](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
-| Indirect light | Hateno clear, cloudy, and clear at night | Read the red input to the first LightAnalyzer reduction, the dimensions of its input and first output, and the final exposure and analyzer texels. This establishes the actual reduction footprint and values for these views. | **Open.** The crop, main-light coefficient and last reduction's weather multiplier are implemented and verified offscreen. The independent Expand pass still lacks foliage and character coverage. The native class tests for both are traced. [LightAnalyzer](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
+| Indirect light | Hateno clear, cloudy, and clear at night, with nearby foliage and the character visible | Read Expand red on terrain, foliage and the character. Check the first reduction's input and output sizes, and read the final exposure and analyzer texels. | **Open.** The crop, light and weather coefficients, and the native rules for background, foliage and character coverage are traced. Near foliage and character coverage now pass independent GPU readback. Far-tree billboards and the native per-material shadow sampling still need independent implementation. [LightAnalyzer](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
 | Atmosphere and day/night | The same Hateno clear day and clear night views | Read the pre-shading fog and transmission at near and distant terrain, the main light direction and color, and the sky color before tone mapping. This gives per-view daylight and night reference values for the independent renderer. | **Complete for the JP v208 main view with the shipped atmosphere table.** The stock table load, scattering kernels and per-view palette-driven bake are traced. The independent bake passed the reference check on the decoded table. Its final brightness conversion remains fitted pending per-view values. [Sky LUT passes](wiiu-sky-resources.md#wii-u-v208-shipped-table-and-the-precompute-passes) |
 | Weather and seasons | Hateno rain and clear daylight, with exposed terrain or stone visible in both. Hebra with falling snow. | Read `rain_ratio`, the wetness value in the green channel of PreShading(Shadow), and the opaque HDR result at the same Hateno surfaces. In the Hebra frame, identify the precipitation draws and read the ground's actual material, wetness and lighting. | **Complete for stock JP v208 MainField terrain and outdoor weather, as static research.** The tile data already contains the snow material mix. Snowfall uses a separate effect path, while the deferred rain inputs decay toward dry. The traced terrain, forecast and palette paths have no independent seasonal selector. The independent forecast still approximates the cold transition. [Snow-covered terrain](weather.md#12-snow-covered-mainfield-terrain-in-jp-v208) |
 

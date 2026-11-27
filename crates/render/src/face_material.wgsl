@@ -134,7 +134,7 @@ fn fragment(face_in: FaceVertexOutput, @builtin(front_facing) is_front: bool)
 #ifdef PREPASS_FRAGMENT
     var out: FragmentOutput;
 #ifdef NORMAL_PREPASS
-    out.normal = vec4(normalize(in.world_normal) * 0.5 + vec3(0.5), 1.0);
+    out.normal = vec4(normalize(in.world_normal) * 0.5 + vec3(0.5), 2.0 / 3.0);
 #endif
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     out.frag_depth = in.unclipped_depth;

@@ -26,6 +26,7 @@
 @group(2) @binding(11) var half_normal_guide: texture_2d<f32>;
 @group(2) @binding(12) var half_depth_guide: texture_2d<f32>;
 @group(2) @binding(13) var half_expand: texture_2d<f32>;
+@group(2) @binding(14) var scene_normals: texture_2d<f32>;
 
 struct FieldPixel {
     pbr: PbrInput,
@@ -122,10 +123,27 @@ fn expand(in: FieldVertexOutput) -> @location(0) vec4<f32> {
     let half_size = field_half_size();
     let uv = in.position.xy / half_size;
     if in.code == 0u {
-        // Opaque materials outside this G-buffer leave no visibility sample yet.
+        // Opaque materials without a supported class leave no visibility sample.
         return vec4(select(0.0, 1.0, scene_depth(uv) == 0.0));
     }
-    return field_visibility(field_pixel(uv), main_light_source(), half_size);
+    let light = main_light_source();
+    if in.code == 4u {
+        return field_visibility(field_pixel(uv), light, half_size);
+    }
+
+    let size = vec2<i32>(textureDimensions(scene_normals));
+    let texel = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2(0), size - vec2(1));
+    let normal = normalize(textureLoad(scene_normals, texel, 0).rgb * 2.0 - 1.0);
+    let center = (vec2<f32>(texel) + 0.5) / vec2<f32>(size);
+    let ndc = vec3(center.x * 2.0 - 1.0, 1.0 - 2.0 * center.y, scene_depth(uv));
+    var pbr = pbr_input_new();
+    pbr.world_position = vec4(position_ndc_to_world(ndc), 1.0);
+    // The character program applies its normal offset only on light-facing surfaces.
+    let use_normal_bias = in.code == 6u || dot(normal, light.to_light) >= 0.35;
+    pbr.world_normal = select(vec3(0.0), normal, use_normal_bias);
+    pbr.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT;
+    let sun = field_surface_shadow(light, pbr, position_ndc_to_view(ndc).z);
+    return vec4(sun, 0.0, 1.0, 1.0);
 }
 
 @fragment

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use bevy::asset::{load_internal_asset, uuid_handle};
 use bevy::core_pipeline::core_3d::{Opaque3d, main_opaque_pass_3d};
+use bevy::core_pipeline::prepass::ViewPrepassTextures;
 use bevy::core_pipeline::schedule::{Core3d, Core3dSystems};
 use bevy::ecs::system::{SystemParamItem, lifetimeless::SRes};
 use bevy::pbr::deferred::DeferredLightingLayout;
@@ -25,7 +26,10 @@ use crate::clouds::{CloudParams, CloudShadows};
 use crate::deferred_light::{CubeMean, SsaoNoise};
 use crate::look::LookTexture;
 
-use super::{CLASS_DEPTH, FIELD_CLASS, Stages, Targets, class_group, classify, color, target};
+use super::{
+    CHARACTER_CLASS, CLASS_DEPTH, FIELD_CLASS, LEAF_CLASS, Stages, Targets, class_group, classify,
+    color, target,
+};
 use super::ambient::{LightAnalysis, LightAnalyzerPipelines, LightAnalyzerPlugin, allocate_reduction};
 use super::geometry::{TerrainMeshes, draw_geometry};
 
@@ -176,8 +180,14 @@ fn init_layouts(mut commands: Commands) {
             .iter()
             .cloned(),
     );
+    let mut expand = base.to_vec();
+    expand.extend(
+        BindGroupLayoutEntries::with_indices(ShaderStages::FRAGMENT, ((14, float()),))
+            .iter()
+            .cloned(),
+    );
     commands.insert_resource(LightingLayouts {
-        expand: BindGroupLayoutDescriptor::new("field_expand", &base),
+        expand: BindGroupLayoutDescriptor::new("field_expand", &expand),
         pre: BindGroupLayoutDescriptor::new("field_preshading", &pre),
         compose: BindGroupLayoutDescriptor::new("field_compose", &compose),
     });
@@ -262,6 +272,7 @@ pub(super) struct LightingPasses {
     pre: RenderPipeline,
     compose: RenderPipeline,
     classes: BindGroup,
+    scene_classes: BindGroup,
     expand_inputs: BindGroup,
     analysis: LightAnalysis,
     pre_inputs: BindGroup,
@@ -269,7 +280,7 @@ pub(super) struct LightingPasses {
 }
 
 fn prepare_lighting(
-    view: ViewQuery<(&ViewTarget, &ExtractedView, &MeshViewBindGroup, &mut Targets)>,
+    view: ViewQuery<(&ExtractedView, &ViewPrepassTextures, &MeshViewBindGroup, &mut Targets)>,
     stages: Res<Stages>,
     pbr: Res<DeferredLightingLayout>,
     keys: Res<ViewKeyCache>,
@@ -287,11 +298,14 @@ fn prepare_lighting(
     ),
     mut state: Local<LightingState>,
 ) {
-    let (_, view, _, mut out) = view.into_inner();
+    let (view, prepass, _, mut out) = view.into_inner();
     if !out.geometry_ready {
         return;
     }
     let (Some(out_lit), Some(&key)) = (&out.lighting, keys.get(&view.retained_view_entity)) else {
+        return;
+    };
+    let Some(scene_normals) = prepass.normal_view() else {
         return;
     };
     let (Some(look), Some(noise), Some(cube), Some(clouds)) = scene else {
@@ -320,7 +334,7 @@ fn prepare_lighting(
         .entry(key)
         .or_insert_with(|| queue_pipelines(&cache, &pbr, &layouts, key));
     let [Some(half), Some(expand), Some(pre), Some(full), Some(compose)] =
-        [stages.half.pipeline, expand, pre, stages.full.pipeline, compose]
+        [stages.scene_half.pipeline, expand, pre, stages.full.pipeline, compose]
             .map(|id| cache.get_render_pipeline(id))
     else {
         return;
@@ -337,10 +351,16 @@ fn prepare_lighting(
         &cloud_map.sampler,
         state.clouds.binding().unwrap(),
     ));
+    let mut expand_inputs = base.to_vec();
+    expand_inputs.extend(
+        BindGroupEntries::with_indices(((14, scene_normals),))
+            .iter()
+            .cloned(),
+    );
     let expand_inputs = device.create_bind_group(
         "field_expand_inputs",
         &cache.get_bind_group_layout(&layouts.expand),
-        &base,
+        &expand_inputs,
     );
     let mut pre_inputs = base.to_vec();
     pre_inputs.extend(
@@ -372,6 +392,11 @@ fn prepare_lighting(
     );
 
     let classes = class_group(&cache, &device, &stages, &out);
+    let scene_classes = device.create_bind_group(
+        "field_scene_class",
+        &cache.get_bind_group_layout(stages.scene_half.layout.as_ref().unwrap()),
+        &BindGroupEntries::with_indices(((2, &out.class.default_view), (7, scene_normals))),
+    );
     out.lighting_passes = Some(LightingPasses {
         half: half.clone(),
         full: full.clone(),
@@ -379,6 +404,7 @@ fn prepare_lighting(
         pre: pre.clone(),
         compose: compose.clone(),
         classes,
+        scene_classes,
         expand_inputs,
         analysis,
         pre_inputs,
@@ -402,12 +428,13 @@ fn draw_lighting(
         pre,
         compose,
         classes,
+        scene_classes,
         expand_inputs,
         analysis,
         pre_inputs,
         compose_inputs,
     } = passes;
-    classify(&mut render, "terrain class half", half, classes, &out.half);
+    classify(&mut render, "field scene class half", half, scene_classes, &out.half);
     draw(
         &mut render,
         "field half shadow and SSAO (Expand)",
@@ -415,7 +442,7 @@ fn draw_lighting(
         bindings,
         expand_inputs,
         &out.half,
-        &[0, FIELD_CLASS],
+        &[0, FIELD_CLASS, LEAF_CLASS, CHARACTER_CLASS],
         &[color(&out_lit.expand.default_view)],
     );
     analysis.draw(&mut render, &out_lit.reduction);

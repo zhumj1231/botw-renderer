@@ -18,6 +18,8 @@ use bevy::render::{ExtractSchedule, Render, RenderApp, RenderStartup, RenderSyst
 
 const SHADER: Handle<Shader> = uuid_handle!("11c705a1-1393-44f5-a5d1-b2992d663941");
 pub const FIELD_CLASS: u8 = 4;
+const LEAF_CLASS: u8 = 6;
+const CHARACTER_CLASS: u8 = 8;
 const CLASS_DEPTH: TextureFormat = TextureFormat::Depth16Unorm;
 const CLASS_FORMAT: TextureFormat = TextureFormat::Rg8Unorm;
 const ALBEDO_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
@@ -70,6 +72,7 @@ struct Stage {
 #[derive(Resource)]
 struct Stages {
     half: Stage,
+    scene_half: Stage,
     full: Stage,
     equal: Stage,
     preview: Stage,
@@ -93,6 +96,10 @@ fn init_pipelines(
     let classify = BindGroupLayoutDescriptor::new(
         "terrain_gbuffer_class",
         &BindGroupLayoutEntries::with_indices(fragment, ((2, float()),)),
+    );
+    let classify_scene = BindGroupLayoutDescriptor::new(
+        "field_scene_class",
+        &BindGroupLayoutEntries::with_indices(fragment, ((2, float()), (7, float()))),
     );
     let preview = BindGroupLayoutDescriptor::new(
         "terrain_gbuffer_preview",
@@ -149,6 +156,13 @@ fn init_pipelines(
         half: queue(
             "classify_half",
             Some(classify.clone()),
+            vec![],
+            depth(true, CompareFunction::Always),
+            false,
+        ),
+        scene_half: queue(
+            "classify_scene_half",
+            Some(classify_scene),
             vec![],
             depth(true, CompareFunction::Always),
             false,

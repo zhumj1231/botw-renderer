@@ -23,8 +23,23 @@
 #ifdef PREPASS_PIPELINE
 #import bevy_pbr::{
     prepass_io::{VertexOutput, FragmentOutput},
+}
+#ifdef NORMAL_PREPASS
+#import bevy_pbr::{
+    pbr_bindings,
+    pbr_prepass_functions::prepass_alpha_discard,
+    pbr_functions::{prepare_world_normal, visibility_range_dither},
+    pbr_types::STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT,
+}
+#ifdef MOTION_VECTOR_PREPASS
+#import bevy_pbr::{mesh_view_bindings::view, prepass_bindings}
+#endif
+#endif
+#ifdef DEFERRED_PREPASS
+#import bevy_pbr::{
     pbr_deferred_functions::deferred_output,
 }
+#endif
 #else
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},
@@ -308,6 +323,36 @@ fn character_color(
 }
 #endif
 
+#ifdef PREPASS_PIPELINE
+#ifndef DEFERRED_PREPASS
+#ifdef NORMAL_PREPASS
+@fragment
+fn analyzer_prepass(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+#ifdef VISIBILITY_RANGE_DITHER
+    visibility_range_dither(in.position, in.visibility_range_dither);
+#endif
+    prepass_alpha_discard(in);
+#ifdef BINDLESS
+    let slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
+    let flags = pbr_bindings::material_array[pbr_bindings::material_indices[slot].material].flags;
+#else
+    let flags = pbr_bindings::material.flags;
+#endif
+    let normal = prepare_world_normal(in.world_normal, (flags & STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u, is_front);
+    var out: FragmentOutput;
+    out.normal = vec4(normalize(normal) * 0.5 + vec3(0.5), 2.0 / 3.0);
+#ifdef MOTION_VECTOR_PREPASS
+    let clip = view.unjittered_clip_from_world * in.world_position;
+    let previous_clip = prepass_bindings::previous_view_uniforms.clip_from_world * in.previous_world_position;
+    out.motion_vector = (clip.xy / clip.w - previous_clip.xy / previous_clip.w) * vec2(0.5, -0.5);
+#endif
+    return out;
+}
+#endif
+#endif
+#endif
+
+#ifdef DEFERRED_PREPASS
 @fragment
 fn fragment(
     in: VertexOutput,
@@ -316,15 +361,18 @@ fn fragment(
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
 
-#ifdef PREPASS_PIPELINE
-    let out = deferred_output(in, pbr_input);
-#else
-    let out = shade_character(in, is_front, pbr_input, vec4<f32>(-1.0));
-#endif
-    return out;
+    return deferred_output(in, pbr_input);
 }
+#endif
 
 #ifndef PREPASS_PIPELINE
+@fragment
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
+    return shade_character(in, is_front, pbr_input, vec4<f32>(-1.0));
+}
+
 fn shade_character(in: VertexOutput, is_front: bool, input: PbrInput, maps_override: vec4<f32>) -> FragmentOutput {
     var pbr_input = input;
     var out: FragmentOutput;

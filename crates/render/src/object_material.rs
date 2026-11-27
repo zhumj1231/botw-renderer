@@ -157,11 +157,8 @@ impl MaterialExtension for ObjectShading {
         SHADER.into()
     }
 
-    /// A model handing over to its billboard dissolves with the game's mask
-    /// in the depth prepass and the shadows too (`model_hidden`), or its
-    /// depth would hide what shows through the pixels dissolved in the main
-    /// pass: Bevy draws it there without a fragment shader (opaque) or with
-    /// its own dither (cut out).
+    /// Keep the billboard handoff mask in depth and shadow passes. The
+    /// experimental normal prepass also tags visible foliage for Expand.
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
@@ -175,7 +172,7 @@ impl MaterialExtension for ObjectShading {
         if prepass
             && key
                 .mesh_key
-                .contains(MeshPipelineKey::VISIBILITY_RANGE_DITHER)
+                .intersects(MeshPipelineKey::VISIBILITY_RANGE_DITHER | MeshPipelineKey::NORMAL_PREPASS)
         {
             let fragment = descriptor.fragment.take();
             descriptor.fragment = Some(FragmentState {

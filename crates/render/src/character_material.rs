@@ -18,9 +18,15 @@
 
 use bevy::asset::{load_internal_asset, uuid_handle};
 use bevy::ecs::system::SystemParam;
-use bevy::pbr::{ExtendedMaterial, MaterialExtension};
+use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::pbr::{
+    ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
+    MeshPipelineKey,
+};
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+};
 use bevy::shader::ShaderRef;
 
 use crate::clouds::{CloudParams, CloudShadows, update_clouds};
@@ -99,6 +105,26 @@ impl From<&CharacterShading> for CharacterParams {
 impl MaterialExtension for CharacterShading {
     fn fragment_shader() -> ShaderRef {
         SHADER.into()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if key.mesh_key.contains(MeshPipelineKey::NORMAL_PREPASS)
+            && !key.mesh_key.contains(MeshPipelineKey::DEFERRED_PREPASS)
+            && descriptor
+                .vertex
+                .shader_defs
+                .contains(&"PREPASS_PIPELINE".into())
+            && let Some(fragment) = &mut descriptor.fragment
+        {
+            fragment.shader = SHADER;
+            fragment.entry_point = Some("analyzer_prepass".into());
+        }
+        Ok(())
     }
 }
 

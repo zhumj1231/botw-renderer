@@ -4,6 +4,7 @@
 @group(0) @binding(4) var normals: texture_2d<f32>;
 @group(0) @binding(5) var half_classes: texture_depth_2d;
 @group(0) @binding(6) var equal_result: texture_2d<f32>;
+@group(0) @binding(7) var scene_normals: texture_2d<f32>;
 
 fn coord(uv: vec2<f32>, size: vec2<u32>) -> vec2<i32> {
     return clamp(vec2<i32>(uv * vec2<f32>(size)), vec2(0), vec2<i32>(size) - vec2(1));
@@ -18,6 +19,23 @@ fn classification_depth(uv: vec2<f32>, mask: u32) -> f32 {
 fn classify_half(in: FullscreenVertexOutput) -> @builtin(frag_depth) f32 {
     let half_size = vec2<f32>(max(textureDimensions(classifications) / 2u, vec2(1u)));
     return classification_depth(in.position.xy / half_size, 0x0eu);
+}
+
+@fragment
+fn classify_scene_half(in: FullscreenVertexOutput) -> @builtin(frag_depth) f32 {
+    let half_size = vec2<f32>(max(textureDimensions(classifications) / 2u, vec2(1u)));
+    let uv = in.position.xy / half_size;
+    let terrain = classification_depth(uv, 0x0eu);
+    if terrain != 0.0 {
+        return terrain;
+    }
+    let normal = textureLoad(scene_normals, coord(uv, textureDimensions(scene_normals)), 0);
+    // The two spare prepass codes carry native leaf and coarse character classes.
+    switch u32(round(normal.a * 3.0)) {
+        case 1u: { return 6.0 / 255.0; }
+        case 2u: { return 8.0 / 255.0; }
+        default: { return 0.0; }
+    }
 }
 
 @fragment

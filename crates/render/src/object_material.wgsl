@@ -25,6 +25,15 @@
 }
 #ifdef PREPASS_FRAGMENT
 #import bevy_pbr::prepass_io::FragmentOutput
+#ifdef NORMAL_PREPASS
+#import bevy_pbr::{
+    pbr_functions::prepare_world_normal,
+    pbr_types::STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT,
+}
+#endif
+#ifdef MOTION_VECTOR_PREPASS
+#import bevy_pbr::{mesh_view_bindings::view, prepass_bindings}
+#endif
 #endif
 #else
 #import bevy_pbr::{
@@ -106,18 +115,35 @@ fn dissolved(in: VertexOutput) -> bool {
 
 #ifdef PREPASS_PIPELINE
 
-// The depth prepass and the shadows of a dissolving model (see
-// `ObjectShading::specialize`): only its depth is drawn.
+// Match the forward cutout before tagging foliage in the camera prepass.
 #ifdef PREPASS_FRAGMENT
 @fragment
-fn fragment(in: VertexOutput) -> FragmentOutput {
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     if dissolved(in) {
         discard;
     }
     prepass_alpha_discard(in);
     var out: FragmentOutput;
+#ifdef NORMAL_PREPASS
+#ifdef BINDLESS
+    let slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
+    let flags = pbr_bindings::material_array[material_indices[slot].material].flags;
+    let object = object_params[object_indices[slot].params];
+#else
+    let flags = pbr_bindings::material.flags;
+    let object = params;
+#endif
+    let normal = prepare_world_normal(in.world_normal, (flags & STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u, is_front);
+    let tag = select(1.0, 1.0 / 3.0, object.leaf.x > 0.5);
+    out.normal = vec4(normalize(normal) * 0.5 + vec3(0.5), tag);
+#endif
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     out.frag_depth = in.unclipped_depth;
+#endif
+#ifdef MOTION_VECTOR_PREPASS
+    let clip = view.unjittered_clip_from_world * in.world_position;
+    let previous_clip = prepass_bindings::previous_view_uniforms.clip_from_world * in.previous_world_position;
+    out.motion_vector = (clip.xy / clip.w - previous_clip.xy / previous_clip.w) * vec2(0.5, -0.5);
 #endif
     return out;
 }
