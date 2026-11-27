@@ -68,6 +68,22 @@ attachment. Class 7 has separate visibility and pre-shading rules. The water
 chain depends on the second shared lighting layer used when reconstructing
 what is beneath the surface.
 
+## Global outdoor lighting
+
+| Input | Source and remaining work |
+| --- | --- |
+| Indirect light and exposure | Native `LightAnalyzer` reduces `Expand.x` and samples the environment cube. The result controls ambient brightness and saturation. The host measures cube brightness but fixes the sunlit share at `0.85`. The new terrain Expand target provides the first input to a reduction. Its current coverage is limited to terrain. [Native reduction and exposure](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
+| SSAO and dynamic shadow | Native field PS 128 uses half normalized linear depth, a noise-rotated AO footprint and a dynamic shadow range. The host writes its existing AO and Bevy cascade visibility into Expand. Terrain ambient reads the AO from that texture. [Field visibility and AO](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
+| Sky, day/night and weather | The host uses the baked area and time-of-day palettes, separate sun and moon paths, cloud shadows, fog scattering and a shared look texture. Regional climate and temperature drive the forecast, including conversion of rain to snow in the cold. Rain and snow also feed the effect system. An independent seasonal input has yet to be traced. [Weather and precipitation](weather.md) · [Sky resources](wiiu-sky-resources.md) |
+
+The next indirect-light comparison needs to distinguish valid surface
+samples from cleared pixels before applying the reduction to the scene.
+Frozen day/night and weather cases can exercise this path with the existing
+baked region. The independent path completed the 1280×720 Hateno night
+case at 23:00 and the forced snow case at 10:00. The latter showed the
+weather's diffuse lighting and haze changes. Snow particles and cold-region
+surface coverage still need a dedicated fixture.
+
 ## Experimental terrain lighting
 
 Capture both modes with the same Hateno preset, time, weather and

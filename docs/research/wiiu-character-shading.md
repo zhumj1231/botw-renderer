@@ -117,7 +117,23 @@ Designations above; `sat_ = 1 − min(A)/max(A)`, `M = max(A)`, `gl = normal.w`,
 
 The main aisle VS (Cemu `1a14de8e58d5b30a`, full-screen triangle) reads `gsys_user4` (12×1): `Sem2.rgb = lerp(T[4], T[5], v)` (v - 0 at the top of the screen, 1 at the bottom), `Sem2.w = T[0].y`.
 
-`gsys_user4` - index 4 of the KSys array (`ENV_CopySkyFogsToCloudObject` `0x033ff8cc`: `local_230` = object KSys+0x1e0, the form x0x6f0texture +0x340) The object is `gfx::LightAnalyzer` (record designer) `0x038b4280`program `light_analyzer` into `uking_pass_shader`); +0x340 ← Goal +0x638 (12×1, format) 0x1a) in the + mode0x388 = 0 (`0x038b48a4`Passage (Passage)`0x038b4d70`): (a) step 5 folds the cube map into 1×1 (average 14 directions, `cCubeMap2D`(b) Steps 1–2 reduce the goal **Expand** (x = "in the sun" from PS 124/120/128) to 1 pixel`cExposure`step 2x `cForceShadowRatio`); (c) step 4 (Cemu) `728b9bc3556c3de1`) writes 12 texels:
+KSys supplies `gsys_user4` from `gfx::LightAnalyzer` at `0x033ff8cc`.
+The analyzer's sampler at `+0x340` points to its 12×1 result at `+0x638`
+(format `0x1a`). In `uking_pass_shader`, `light_analyzer` step 5 folds 14
+cube directions into `cCubeMap2D`. Steps 0–2 reduce `Expand.x`, and step 4
+combines both inputs into the 12 texels.
+
+The JP v208 RPX binds the Expand target at G-buffer `+0x2e4c` in the
+reduction routine at `0x038b4d70`. The loop at `0x038b5160–0x038b53e0`
+updates each dimension to `max(2, ceil(n/2))` and stops at 2×2. In the
+JP shader archive, PS 479 and 481 sample red once and replicate it.
+PS 483 does the same and multiplies by `cForceShadowRatio`. The last
+reduction target becomes `cExposure`, which PS 487 samples at `(0.5, 0.5)`
+before multiplying by `cMainLightColor.w` and cubing the result. The
+intermediate `TextureSampler` is initialized with clamp and linear
+filtering by `GX2InitSampler` at `0x03a82fcc`. These static findings leave
+the live input viewport and the treatment of unwritten Expand pixels to
+be verified.
 
 ```text
 e     = (cExposure·main.w)³,  avg = luma(cCubeMap2D)
