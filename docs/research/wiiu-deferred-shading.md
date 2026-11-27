@@ -109,6 +109,26 @@ The D16 classification identifies the field pixels for comparisons.
 Separate screenshots fix the sun and weather, while cloud shadows still
 advance with the runtime clock.
 
+### Capturing the same frame on Windows
+
+Launch the release renderer with RenderDoc's `capture` command. Use
+`--renderdoc` with `--screenshot` to capture the exact offscreen frame
+that produces the PNG, after the world has loaded. Set the Vulkan backend
+and choose local output paths.
+
+```powershell
+$env:WGPU_BACKEND = "vulkan"
+New-Item -ItemType Directory -Force captures | Out-Null
+renderdoccmd capture -w -c captures/hateno ./render.exe --assets assets-hateno --place hateno --time 10:00 --weather bluesky --resolution 1280x720 --terrain-deferred --screenshot captures/hateno.png --renderdoc
+```
+
+In the 1280×720 Hateno validation capture, geometry used EID 34439,
+half classification and pre-shading used EIDs 37952 and 37966, and full
+classification and HDR composition used EIDs 37977 and 37991. The
+replayed image at the screenshot copy (EID 39561) matched all 2,764,800
+RGB bytes of the saved PNG. Keep the capture and game-derived images
+outside source control.
+
 In an earlier 1600×900 Hateno Vulkan verification frame, both terrain
 paths drew in the same frame. Comparing class-4 pixels in HDR before and
 after composition (EIDs 45256 and 45270) gave a mean absolute difference

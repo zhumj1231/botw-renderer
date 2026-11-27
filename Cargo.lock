@@ -4812,6 +4812,8 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "bytemuck",
+ "libloading",
+ "renderdoc-sys",
  "ron",
  "serde",
  "serde_json",

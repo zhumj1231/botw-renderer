@@ -86,6 +86,8 @@ usage: render [options]
   --terrain-gbuffer  show the experimental terrain G-buffer and class depths
   --terrain-deferred  shade the main view's terrain through the experimental G-buffer
   --screenshot <png>  once the world has loaded, save a frame and exit
+  --renderdoc      capture the same offscreen frame when launched by RenderDoc
+                   (Windows, requires --screenshot)
   --character <name>  stand a baked character (characters/<name>.ron, e.g.
                    link) on the ground where the start camera looks,
                    facing the camera
@@ -120,6 +122,7 @@ struct Args {
     profile: bool,
     terrain_gbuffer: Option<terrain_gbuffer::TerrainGBuffer>,
     screenshot: Option<PathBuf>,
+    renderdoc: bool,
     /// A character to stand where the camera looks, and its clip.
     character: Option<String>,
     clip: String,
@@ -140,6 +143,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         profile: false,
         terrain_gbuffer: None,
         screenshot: None,
+        renderdoc: false,
         character: None,
         clip: "Nml_Wait".into(),
         villagers: false,
@@ -178,12 +182,19 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--terrain-gbuffer" => args.terrain_gbuffer = Some(terrain_gbuffer::TerrainGBuffer::Preview),
             "--terrain-deferred" => args.terrain_gbuffer = Some(terrain_gbuffer::TerrainGBuffer::Lighting),
             "--screenshot" => args.screenshot = Some(value()?.into()),
+            "--renderdoc" => args.renderdoc = true,
             "--character" => args.character = Some(value()?),
             "--clip" => args.clip = value()?,
             "--villagers" => args.villagers = true,
             "-h" | "--help" => return Ok(None),
             _ => return Err(format!("unknown option {arg}")),
         }
+    }
+    if args.renderdoc && args.screenshot.is_none() {
+        return Err("--renderdoc requires --screenshot".into());
+    }
+    if args.renderdoc && !cfg!(windows) {
+        return Err("--renderdoc offscreen capture requires Windows".into());
     }
     args.assets = args
         .assets
@@ -365,9 +376,6 @@ fn main() -> AppExit {
     if args.screenshot.is_some() || args.no_vsync {
         app.insert_resource(WinitSettings::continuous());
     }
-    if let Some(path) = args.screenshot.clone() {
-        app.add_plugins(capture::CapturePlugin { path });
-    }
     let plugins = DefaultPlugins
         .set(WindowPlugin {
             primary_window: Some(Window {
@@ -390,8 +398,15 @@ fn main() -> AppExit {
             file_path: args.assets.to_string_lossy().into_owned(),
             ..default()
         });
-    app.add_plugins(plugins)
-        .add_plugins(precipitation::PrecipitationPlugin)
+    app.add_plugins(plugins);
+    if let Some(path) = args.screenshot.clone() {
+        app.add_plugins(capture::CapturePlugin {
+            path,
+            #[cfg(windows)]
+            renderdoc: args.renderdoc,
+        });
+    }
+    app.add_plugins(precipitation::PrecipitationPlugin)
         .add_plugins(volume_mask::VolumeMaskPlugin)
         .add_plugins(lightning::LightningPlugin {
             sampler: sampler.clone(),

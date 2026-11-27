@@ -22,8 +22,13 @@ use crate::ready::WorldReady;
 use crate::terrain::TerrainStats;
 use crate::water_material::WaterFollow;
 
+#[cfg(windows)]
+mod renderdoc;
+
 pub struct CapturePlugin {
     pub path: PathBuf,
+    #[cfg(windows)]
+    pub renderdoc: bool,
 }
 
 impl Plugin for CapturePlugin {
@@ -43,6 +48,10 @@ impl Plugin for CapturePlugin {
         })
         .add_systems(PostStartup, render_offscreen)
         .add_systems(Last, capture);
+        #[cfg(windows)]
+        if self.renderdoc {
+            renderdoc::install(app);
+        }
     }
 }
 
@@ -112,6 +121,7 @@ fn capture(
     real: Res<Time<Real>>,
     mut follow: ResMut<WaterFollow>,
     mut exit: MessageWriter<AppExit>,
+    #[cfg(windows)] mut renderdoc: Option<ResMut<renderdoc::Request>>,
 ) {
     if let Some(error) = world.render_error() {
         error!("capture: shader compilation failed: {error}");
@@ -163,6 +173,10 @@ fn capture(
                 return;
             }
             capture.state = State::Requested;
+            #[cfg(windows)]
+            if let Some(request) = renderdoc.as_deref_mut() {
+                request.armed = true;
+            }
             commands
                 .spawn(Screenshot::image(capture.target.clone()))
                 .observe(save_to_disk(capture.path.clone()))
@@ -174,6 +188,18 @@ fn capture(
         // `save_to_disk` writes on its own; give it a few frames.
         State::Saved(frames) if frames < 5 => capture.state = State::Saved(frames + 1),
         State::Saved(_) => {
+            #[cfg(windows)]
+            if let Some(request) = renderdoc.as_deref() {
+                match request.outcome.get() {
+                    None => return,
+                    Some(Err(error)) => {
+                        error!("capture: RenderDoc failed: {error}");
+                        exit.write(AppExit::error());
+                        return;
+                    }
+                    Some(Ok(path)) => info!("capture: RenderDoc saved {}", path.display()),
+                }
+            }
             info!("saved {}", capture.path.display());
             exit.write(AppExit::Success);
         }
