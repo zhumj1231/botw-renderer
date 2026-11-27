@@ -366,6 +366,57 @@ The separate billboard replay above verified class-6 coverage.
 A native replay at the requested views can read the draw-time sampler
 state and the resulting Expand and analyzer values.
 
+#### Independent renderer
+
+The same half-resolution Expand pass routes near leaf meshes and far
+billboards to the class-6 writer. Their alpha cutout controls coverage.
+For covered pixels, a separate material bit selects the 1 m receiver
+shift. The traced crown program sets that bit, while the billboard
+renderer uses the `NrmTrs` blue channel as in program 7. The class-8
+writer covers opaque characters in the independent prepass, including
+skin with a transmission map and equipment. The PS 124 transmission
+bias comes from the same material map and UV set as character shading.
+Both writers keep full weight wherever they cover an Expand pixel.
+LightAnalyzer uses their red values through its existing reduction.
+
+`bake --only light` exports level 0 from the base game's
+`Model/SystemModel.Tex1.sbfres` to `light/solar_irradiation.ktx2`. The
+update's Tex2 entry holds the smaller mip. The renderer samples level 0
+with repeat and bilinear filtering, as specified by the stored material's
+[Latte sampler fields](https://github.com/cemu-project/Cemu/blob/main/src/Cafe/HW/Latte/ISA/LatteReg.h).
+The character blend uses the clock's three RGB weights. With an older
+asset directory that omits the map, baked visibility defaults to 1.
+
+Offscreen validation used 640×360 at Hateno, clear 10:00, and checked
+the 320×180 Expand image and all five LightAnalyzer reduction levels.
+The last column removes only the named class from the CPU reference.
+
+| Independent scene | Class samples | Red values below 255 | GPU resolved share | CPU share with that class excluded |
+| --- | ---: | ---: | ---: | ---: |
+| Vulkan, distant-tree billboards | 4,096 | 2,979 | 0.700195 | 0.742416 |
+| DX12, close Link | 487 | 467 | 0.824707 | 0.830786 |
+| DX12, five characters at surveyed depths | 28 | 28 | 1.000000 | 1.000000 |
+
+Both of the first two scenes wrote red values from 0 through 255.
+The final CPU reduction with all samples matched the GPU within
+0.0004 across the three scenes. In the billboard capture (Expand draw
+25156), replayed depth, normal and cascade textures reproduced 4,092
+of 4,096 red values within two 8-bit steps. The four outliers remain
+unresolved. In the controlled character scene, 16 pixels at 161 and
+172 m fell within the expected dynamic/baked blend bounds. The 12
+pixels at 182, 200 and 210 m read 224–229. That fully baked range was
+within the CPU BC1 sampling bounds around the corresponding placements.
+At this camera, the sparse character pixels did not affect the final
+reduction sample. The close Link readback verifies their contribution
+under a camera that covers more of the frame.
+
+The port uses Bevy's reverse-Z cascades and the selected full-resolution
+depth taps for the receiver and its two neighbors. It assumes scene
+material depth scale 1 and both depth and world shadow offsets 0. Native
+draw-time uniforms, depth gathering at silhouettes and the camera's
+cascade map content can affect the Wii U result. Other material programs,
+such as grass and translucent blending, have their own routing.
+
 ## Reproduction and limitations
 
 ```sh

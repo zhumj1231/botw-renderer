@@ -159,7 +159,7 @@ impl Plugin for DayNightPlugin {
                 PostUpdate,
                 (
                     update_sky.before(TransformSystems::Propagate),
-                    update_light_look.before(crate::look::LookSystems::Upload),
+                    update_light_look.after(update_sky).before(crate::look::LookSystems::Upload),
                 ),
             );
     }
@@ -974,11 +974,35 @@ pub fn update_sky_state(
     *sky = now;
 }
 
+// JP v208 0x0365aa10 selects the RGB weights of solar_irradiation.
+fn far_shadow_weights(mut hour: f32) -> Vec3 {
+    let (center, width) = if (5.5..19.5).contains(&hour) {
+        (12.5, 7.0)
+    } else if (19.5..22.085).contains(&hour) || (2.0..3.085).contains(&hour) {
+        return Vec3::Z;
+    } else if hour >= 22.085 || hour < 2.0 {
+        if hour < 2.0 {
+            hour += 24.0;
+        }
+        (24.0425, 1.9575005)
+    } else {
+        return Vec3::X;
+    };
+    let red = ((center - hour) / width).clamp(0.0, 1.0);
+    let blue = ((hour - center) / width).clamp(0.0, 1.0);
+    Vec3::new(red, 1.0 - (red + blue), blue)
+}
+
 fn update_light_look(
+    time: Res<TimeOfDay>,
     sky: Res<Sky>,
     weather: Option<Res<Weather>>,
     mut look: ResMut<crate::look::Look>,
 ) {
+    let weights = far_shadow_weights(time.hours);
+    if look.far_shadow_weights != weights {
+        look.far_shadow_weights = weights;
+    }
     if look.main_light_change != sky.light_change {
         look.main_light_change = sky.light_change;
     }

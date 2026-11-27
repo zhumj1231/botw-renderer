@@ -23,6 +23,9 @@
 // through where its translucency is above zero, darkened under cloud
 // shadows, then haze (`botw::look`).
 
+#ifdef NORMAL_PREPASS
+#import botw::normal_map::pack_expand_receiver
+#endif
 #import bevy_pbr::{
     view_transformations::position_world_to_clip,
     mesh_view_bindings::{globals, view},
@@ -276,16 +279,15 @@ fn atlas_normal(encoded: vec2<f32>, facing: vec3<f32>) -> vec3<f32> {
 fn fragment(in: VertexOutput) -> FragmentOutput {
     let atlas = camera_atlas_sample(in);
 #ifdef NORMAL_PREPASS
-    let packed = textureSample(normals, albedo_sampler, in.uv, atlas.layer).rg;
+    let packed = textureSample(normals, albedo_sampler, in.uv, atlas.layer).rgb;
 #endif
     if outside_camera_cutout(in, atlas) {
         discard;
     }
     var out: FragmentOutput;
 #ifdef NORMAL_PREPASS
-    let normal = atlas_normal(packed, normalize(in.world_normal));
-    // Match the normal prepass tag used by near foliage for Expand class 6.
-    out.normal = vec4(normal * 0.5 + vec3(0.5), 1.0 / 3.0);
+    let normal = atlas_normal(packed.rg, normalize(in.world_normal));
+    out.normal = pack_expand_receiver(normal, u32(packed.b > 0.0), 1u);
 #endif
     return out;
 }

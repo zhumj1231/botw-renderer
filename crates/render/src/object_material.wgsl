@@ -26,12 +26,8 @@
 #ifdef PREPASS_FRAGMENT
 #import bevy_pbr::prepass_io::FragmentOutput
 #ifdef NORMAL_PREPASS
-#import bevy_pbr::{
-    pbr_functions::prepare_world_normal,
-    pbr_fragment::pbr_input_from_standard_material,
-    pbr_types::STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT,
-}
-#import botw::normal_map::mapped_normal
+#import bevy_pbr::pbr_fragment::pbr_input_from_standard_material
+#import botw::normal_map::{mapped_normal, pack_expand_receiver}
 #endif
 #ifdef MOTION_VECTOR_PREPASS
 #import bevy_pbr::{mesh_view_bindings::view, prepass_bindings}
@@ -136,18 +132,17 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #ifdef NORMAL_PREPASS
 #ifdef BINDLESS
     let slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
-    let flags = pbr_bindings::material_array[material_indices[slot].material].flags;
     let object = object_params[object_indices[slot].params];
 #else
-    let flags = pbr_bindings::material.flags;
     let object = params;
 #endif
-    let normal = prepare_world_normal(in.world_normal, (flags & STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u, is_front);
     let pbr = pbr_input_from_standard_material(in, is_front);
-    let mapped = mapped_normal(in, is_front, pbr);
-    let leaf = object.leaf.x > 0.5;
-    let tag = select(0.0, 1.0 / 3.0, leaf);
-    out.normal = vec4(normalize(select(mapped, normal, leaf)) * 0.5 + vec3(0.5), tag);
+    let normal = normalize(mapped_normal(in, is_front, pbr));
+    out.normal = vec4(normal * 0.5 + vec3(0.5), 0.0);
+    if object.leaf.x > 0.5 {
+        // PS 8061 sets albedo bit 1 and clears the normal's low bit.
+        out.normal = pack_expand_receiver(normal, 1u, 1u);
+    }
 #endif
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     out.frag_depth = in.unclipped_depth;

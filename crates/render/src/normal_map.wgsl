@@ -25,6 +25,7 @@
 #else
 #import bevy_pbr::forward_io::VertexOutput
 #endif
+#import bevy_pbr::utils::{octahedral_encode, octahedral_decode}
 #import bevy_render::bindless::{bindless_samplers_filtering, bindless_textures_2d}
 
 #ifdef BINDLESS
@@ -75,4 +76,22 @@ fn mapped_normal(in: VertexOutput, is_front: bool, pbr: PbrInput) -> vec3<f32> {
 #endif
 #endif
     return N;
+}
+
+// In the tagged normal prepass, RG holds the octahedral normal and B
+// holds the Expand material bits. Untagged field normals still use RGB.
+fn pack_expand_receiver(normal: vec3<f32>, bits: u32, tag: u32) -> vec4<f32> {
+    return vec4(octahedral_encode(normal), f32(bits) / 1023.0, f32(tag) / 3.0);
+}
+
+fn expand_receiver_normal(packed: vec4<f32>) -> vec3<f32> {
+    return octahedral_decode(packed.rg);
+}
+
+fn expand_receiver_bits(packed: vec4<f32>) -> u32 {
+    return u32(round(packed.b * 1023.0));
+}
+
+fn character_expand_bits(transmission: f32) -> u32 {
+    return (u32(saturate(transmission) * 255.0) >> 4u) << 1u;
 }

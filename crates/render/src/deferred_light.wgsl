@@ -276,6 +276,15 @@ fn field_shadow_range(light_index: u32) -> f32 {
     return 150.0;
 }
 
+fn four_shadow_comparisons(uv: vec2<f32>, depth: f32, layer: i32) -> f32 {
+    let half_texel = 0.5 / vec2<f32>(textureDimensions(view_bindings::directional_shadow_textures));
+    return 0.25 * (
+        sample_shadow_map_hardware(uv + half_texel, depth, layer) +
+        sample_shadow_map_hardware(uv - half_texel, depth, layer) +
+        sample_shadow_map_hardware(uv + vec2(half_texel.x, -half_texel.y), depth, layer) +
+        sample_shadow_map_hardware(uv + vec2(-half_texel.x, half_texel.y), depth, layer));
+}
+
 fn field_surface_shadow(light: MainLight, pbr: PbrInput, view_z: f32) -> f32 {
     if !receives_main_shadow(light, pbr) {
         return 1.0;
@@ -290,14 +299,9 @@ fn field_surface_shadow(light: MainLight, pbr: PbrInput, view_z: f32) -> f32 {
     if coord.w == 0.0 {
         return 1.0;
     }
-    let texel = 0.5 / vec2<f32>(textureDimensions(view_bindings::directional_shadow_textures));
     let depth = field_shadow_depth(coord.z, cascade);
     let index = i32((*state).depth_texture_base_index + cascade);
-    var visibility = 0.25 * (
-        sample_shadow_map_hardware(coord.xy + texel, depth, index) +
-        sample_shadow_map_hardware(coord.xy - texel, depth, index) +
-        sample_shadow_map_hardware(coord.xy + vec2(texel.x, -texel.y), depth, index) +
-        sample_shadow_map_hardware(coord.xy + vec2(-texel.x, texel.y), depth, index));
+    var visibility = four_shadow_comparisons(coord.xy, depth, index);
     if cascade > 0u && visibility < 1.0 {
         let previous = field_shadow_coord(light.index, cascade - 1u, pbr);
         if previous.w > 0.0 {

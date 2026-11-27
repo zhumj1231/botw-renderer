@@ -108,7 +108,7 @@ use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 const SHADER: Handle<Shader> = uuid_handle!("3e7b1c94-6a2d-4f58-b0e3-9c41d5a7f862");
 
 /// Texels in the look texture (`LOOK_TEXELS` in `look.wgsl`).
-pub const LOOK_TEXELS: usize = 28;
+pub const LOOK_TEXELS: usize = 29;
 
 /// Side of the fog's height noise (the game's `cloud_noise`), kept in rows
 /// 1–64 of the look texture under the look's texels (`LOOK_NOISE` in
@@ -297,6 +297,8 @@ pub struct Look {
     /// rain pulse's clock (`gsys_context[20].y`, frames wrapped at 120)
     /// as `time·0.125` wrapped to [0, 1), 24.w the overcast sky weight.
     pub weather: [Vec4; 4],
+    /// Texel 28: the RGB weights of the far-shadow texture.
+    pub far_shadow_weights: Vec3,
 }
 
 impl Default for Look {
@@ -311,6 +313,7 @@ impl Default for Look {
             adhoc: [Vec4::ZERO; 4],
             volume_mask: [Vec4::ZERO; 4],
             weather: [Vec4::ZERO; 4],
+            far_shadow_weights: Vec3::Y,
         }
     }
 }
@@ -331,6 +334,7 @@ impl Look {
         texels[16..20].copy_from_slice(&self.adhoc);
         texels[20..24].copy_from_slice(&self.volume_mask);
         texels[24..28].copy_from_slice(&self.weather);
+        texels[28] = self.far_shadow_weights.extend(0.0);
         texels
     }
 }
@@ -562,6 +566,7 @@ mod tests {
             adhoc: [Vec4::splat(16.0), Vec4::ZERO, Vec4::ZERO, Vec4::ZERO],
             volume_mask: [Vec4::splat(20.0), Vec4::ZERO, Vec4::ZERO, Vec4::ZERO],
             weather: [Vec4::splat(24.0), Vec4::ZERO, Vec4::ZERO, Vec4::ZERO],
+            far_shadow_weights: Vec3::Y,
         };
         let texels = look.texels();
         assert_eq!(texels[0], Vec4::new(2.0, 0.5, 0.6, 0.0));
@@ -577,6 +582,7 @@ mod tests {
         assert_eq!(texels[16], Vec4::splat(16.0));
         assert_eq!(texels[20], Vec4::splat(20.0));
         assert_eq!(texels[24], Vec4::splat(24.0));
+        assert_eq!(texels[28], Vec4::Y);
     }
 
     #[test]

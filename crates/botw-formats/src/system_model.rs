@@ -2,7 +2,7 @@
 //! `Model/SystemModel.Tex2.sbfres`), which the deferred shading's materials
 //! (`DeferredMain` in `SystemModel.sbfres`) sample.
 
-use crate::bfres::{Bfres, bc};
+use crate::bfres::{Bfres, bc, gx2};
 use crate::content::ContentRoots;
 use crate::{FormatError, Result};
 
@@ -70,6 +70,36 @@ pub fn load_ssao_noise(roots: &ContentRoots) -> Result<Option<RgTexture>> {
             texels,
         })
     })
+}
+
+/// Level 0 of the baked world shadow map sampled by the character Expand pass.
+pub fn load_solar_irradiation(roots: &ContentRoots) -> Result<Option<crate::bfres::TextureImage>> {
+    let Some(path) = roots.find("Model/SystemModel.Tex1.sbfres") else {
+        return Ok(None);
+    };
+    let file = std::fs::read(&path).map_err(|source| FormatError::Io { path, source })?;
+    let bytes = crate::yaz0::decompress_if(&file)?;
+    let texture = Bfres::parse(&bytes)?
+        .texture("solar_irradiation")?
+        .ok_or(FormatError::Invalid("SystemModel.Tex1: no solar_irradiation"))?;
+    if texture.surface.format() != (gx2::Format::Bc1 { srgb: false })
+        || texture.component_select[..3] != [0, 1, 2]
+    {
+        return Err(FormatError::Invalid(
+            "SystemModel.Tex1: expected RGB BC1 solar_irradiation",
+        ));
+    }
+    let data = texture.level0_slice(0)?;
+    Ok(Some(crate::bfres::TextureImage {
+        name: texture.name,
+        format: texture.surface.format(),
+        width: texture.surface.width,
+        height: texture.surface.height,
+        layers: 1,
+        mip_levels: 1,
+        data,
+        component_select: texture.component_select,
+    }))
 }
 
 /// Pairs of bytes of an untiled R8G8 image, checked against its size.

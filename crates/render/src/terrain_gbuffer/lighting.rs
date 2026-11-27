@@ -24,7 +24,7 @@ use bevy::render::view::{ExtractedView, ViewTarget};
 use bevy::render::{RenderApp, RenderStartup};
 
 use crate::clouds::{CloudParams, CloudShadows};
-use crate::deferred_light::{CubeMean, SsaoNoise};
+use crate::deferred_light::{CubeMean, SolarIrradiation, SsaoNoise};
 use crate::look::LookTexture;
 use crate::object_material::ObjectMaterial;
 
@@ -215,9 +215,16 @@ fn init_layouts(mut commands: Commands) {
     );
     let mut expand = base.to_vec();
     expand.extend(
-        BindGroupLayoutEntries::with_indices(ShaderStages::FRAGMENT, ((14, float()),))
-            .iter()
-            .cloned(),
+        BindGroupLayoutEntries::with_indices(
+            ShaderStages::FRAGMENT,
+            (
+                (14, float()),
+                (15, texture_2d(TextureSampleType::Float { filterable: true })),
+                (16, sampler(SamplerBindingType::Filtering)),
+            ),
+        )
+        .iter()
+        .cloned(),
     );
     commands.insert_resource(LightingLayouts {
         expand: BindGroupLayoutDescriptor::new("field_expand", &expand),
@@ -330,6 +337,7 @@ fn prepare_lighting(
         Option<Res<SsaoNoise>>,
         Option<Res<CubeMean>>,
         Option<Res<CloudShadows>>,
+        Option<Res<SolarIrradiation>>,
     ),
     mut state: Local<LightingState>,
 ) {
@@ -352,14 +360,15 @@ fn prepare_lighting(
     if diffuse.texture.size() != out.half.texture.size() || guides.texture.size() != diffuse.texture.size() {
         return;
     }
-    let (Some(look), Some(noise), Some(cube), Some(clouds)) = scene else {
+    let (Some(look), Some(noise), Some(cube), Some(clouds), Some(solar)) = scene else {
         return;
     };
-    let (Some(look), Some(noise), Some(cube), Some(cloud_map)) = (
+    let (Some(look), Some(noise), Some(cube), Some(cloud_map), Some(solar)) = (
         images.get(&look.0),
         images.get(&noise.0),
         images.get(&cube.0),
         images.get(&clouds.shadow_map),
+        images.get(&solar.0),
     ) else {
         return;
     };
@@ -397,9 +406,13 @@ fn prepare_lighting(
     ));
     let mut expand_inputs = base.to_vec();
     expand_inputs.extend(
-        BindGroupEntries::with_indices(((14, scene_normals),))
-            .iter()
-            .cloned(),
+        BindGroupEntries::with_indices((
+            (14, scene_normals),
+            (15, &solar.texture_view),
+            (16, &solar.sampler),
+        ))
+        .iter()
+        .cloned(),
     );
     let expand_inputs = device.create_bind_group(
         "field_expand_inputs",

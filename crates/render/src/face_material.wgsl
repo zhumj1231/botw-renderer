@@ -4,6 +4,9 @@
 #import bevy_render::bindless::{bindless_textures_2d, bindless_samplers_filtering}
 #ifdef PREPASS_PIPELINE
 #import bevy_pbr::{mesh_view_bindings::view, prepass_bindings}
+#ifdef NORMAL_PREPASS
+#import botw::normal_map::{pack_expand_receiver, character_expand_bits}
+#endif
 #ifdef PREPASS_FRAGMENT
 #import bevy_pbr::prepass_io::FragmentOutput
 #endif
@@ -134,7 +137,8 @@ fn fragment(face_in: FaceVertexOutput, @builtin(front_facing) is_front: bool)
 #ifdef PREPASS_FRAGMENT
     var out: FragmentOutput;
 #ifdef NORMAL_PREPASS
-    out.normal = vec4(normalize(in.world_normal) * 0.5 + vec3(0.5), 2.0 / 3.0);
+    let bits = character_expand_bits(select(t2.a, 0.0, lip));
+    out.normal = pack_expand_receiver(normalize(in.world_normal), bits, 2u);
 #endif
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     out.frag_depth = in.unclipped_depth;

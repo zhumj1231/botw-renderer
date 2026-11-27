@@ -76,6 +76,7 @@ pub mod paths {
 
     pub const PLACES: &str = "places.ron";
     pub const SSAO_NOISE: &str = "light/ssao_noise.ron";
+    pub const SOLAR_IRRADIATION: &str = "light/solar_irradiation.ktx2";
     pub const ENV_PARAMS: &str = "sky/env_params.ron";
     pub const ENV_SET: &str = "sky/env_set.ron";
     pub const ECOSYSTEM: &str = "sky/ecosystem.ron";

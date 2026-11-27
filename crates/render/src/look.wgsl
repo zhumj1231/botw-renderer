@@ -28,7 +28,7 @@
 #endif
 
 // Texels in the look texture (keep equal to `LOOK_TEXELS` in look.rs).
-const LOOK_TEXELS: u32 = 28u;
+const LOOK_TEXELS: u32 = 29u;
 // Side of the fog's height noise in rows 1–64 (`LOOK_NOISE` in look.rs).
 const LOOK_NOISE: i32 = 64;
 // Side of the game's sky table and its first row (`LOOK_SKY`,

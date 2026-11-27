@@ -26,11 +26,10 @@
 }
 #ifdef NORMAL_PREPASS
 #import bevy_pbr::{
-    pbr_bindings,
     pbr_prepass_functions::prepass_alpha_discard,
-    pbr_functions::{prepare_world_normal, visibility_range_dither},
-    pbr_types::STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT,
+    pbr_functions::visibility_range_dither,
 }
+#import botw::normal_map::{mapped_normal, pack_expand_receiver, character_expand_bits}
 #ifdef MOTION_VECTOR_PREPASS
 #import bevy_pbr::{mesh_view_bindings::view, prepass_bindings}
 #endif
@@ -92,6 +91,30 @@ struct CharacterIndices {
 // The environment's mean brightness, once a frame (deferred_light.rs).
 @group(#{MATERIAL_BIND_GROUP}) @binding(106) var cube_means: texture_2d<f32>;
 #endif
+
+fn sample_character_maps(in: VertexOutput) -> vec4<f32> {
+#ifdef BINDLESS
+    let slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
+    let indices = character_indices[slot];
+    let params = character_params[indices.params];
+#else
+    let params = material_params;
+#endif
+    // The extra maps, on their UV set.
+    var maps = vec4<f32>(1.0, 1.0, 0.0, 1.0);
+#ifdef VERTEX_UVS_A
+    var map_uv = in.uv;
+#ifdef VERTEX_UVS_B
+    map_uv = select(in.uv, in.uv_b, params.kind.w > 0.5);
+#endif
+#ifdef BINDLESS
+    maps = textureSample(bindless_textures_2d[indices.maps], bindless_samplers_filtering[indices.maps_sampler], map_uv);
+#else
+    maps = textureSample(maps_texture, maps_sampler, map_uv);
+#endif
+#endif
+    return maps;
+}
 
 #ifndef PREPASS_PIPELINE
 // `uking_material_behave` of the shading classes.
@@ -334,13 +357,15 @@ fn analyzer_prepass(in: VertexOutput, @builtin(front_facing) is_front: bool) -> 
     prepass_alpha_discard(in);
 #ifdef BINDLESS
     let slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
-    let flags = pbr_bindings::material_array[pbr_bindings::material_indices[slot].material].flags;
+    let params = character_params[character_indices[slot].params];
 #else
-    let flags = pbr_bindings::material.flags;
+    let params = material_params;
 #endif
-    let normal = prepare_world_normal(in.world_normal, (flags & STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u, is_front);
+    let input = pbr_input_from_standard_material(in, is_front);
+    let normal = normalize(mapped_normal(in, is_front, input));
+    let transmission = select(0.0, sample_character_maps(in).b, params.kind.z > 0.5);
     var out: FragmentOutput;
-    out.normal = vec4(normalize(normal) * 0.5 + vec3(0.5), 2.0 / 3.0);
+    out.normal = pack_expand_receiver(normal, character_expand_bits(transmission), 2u);
 #ifdef MOTION_VECTOR_PREPASS
     let clip = view.unjittered_clip_from_world * in.world_position;
     let previous_clip = prepass_bindings::previous_view_uniforms.clip_from_world * in.previous_world_position;
@@ -395,19 +420,7 @@ fn shade_character(in: VertexOutput, is_front: bool, input: PbrInput, maps_overr
     let shade = cloud_shadow(cloud_shadow_map, cloud_shadow_sampler, params.clouds, in.world_position.xyz);
     let means = cube_means;
 #endif
-    // The extra maps, on their UV set.
-    var maps = vec4<f32>(1.0, 1.0, 0.0, 1.0);
-#ifdef VERTEX_UVS_A
-    var map_uv = in.uv;
-#ifdef VERTEX_UVS_B
-    map_uv = select(in.uv, in.uv_b, params.kind.w > 0.5);
-#endif
-#ifdef BINDLESS
-    maps = textureSample(bindless_textures_2d[indices.maps], bindless_samplers_filtering[indices.maps_sampler], map_uv);
-#else
-    maps = textureSample(maps_texture, maps_sampler, map_uv);
-#endif
-#endif
+    var maps = sample_character_maps(in);
     if maps_override.w > 0.0 { maps = maps_override; }
     let frame = game_frame(position_world_to_view(in.world_position.xyz), frag_coord_to_uv(in.position.xy));
 

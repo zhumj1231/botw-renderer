@@ -222,7 +222,7 @@ fn run(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// The ambient occlusion's rotations (`SystemModel.Tex2` → `ssao`).
+/// Ambient occlusion rotations and the baked world shadow map.
 fn bake_light(roots: &ContentRoots, out: &std::path::Path) -> Result<(), String> {
     let noise = botw_formats::system_model::load_ssao_noise(roots)
         .map_err(|e| format!("ssao noise: {e}"))?
@@ -235,5 +235,24 @@ fn bake_light(roots: &ContentRoots, out: &std::path::Path) -> Result<(), String>
     asset_format::write_ron(&out.join(asset_format::paths::SSAO_NOISE), &image)
         .map_err(|e| e.to_string())?;
     println!("light: ssao noise {}x{}", image.width, image.height);
+    let Some(solar) = botw_formats::system_model::load_solar_irradiation(roots)
+        .map_err(|e| format!("solar irradiation: {e}"))?
+    else {
+        eprintln!("light: no Model/SystemModel.Tex1.sbfres; far shadow map unavailable");
+        return Ok(());
+    };
+    let texture = asset_format::texture::Texture {
+        format: asset_format::texture::Format::Bc1 { srgb: false },
+        width: solar.width,
+        height: solar.height,
+        layers: solar.layers,
+        mip_levels: solar.mip_levels,
+        data: solar.data,
+        swizzle: solar.component_select,
+    };
+    let bytes = texture.to_ktx2().map_err(|e| e.to_string())?;
+    asset_format::write(&out.join(asset_format::paths::SOLAR_IRRADIATION), &bytes)
+        .map_err(|e| e.to_string())?;
+    println!("light: solar irradiation {}x{}", texture.width, texture.height);
     Ok(())
 }

@@ -11,7 +11,7 @@
 use asset_format::light::RgImage as RgTexture;
 use bevy::asset::{RenderAssetUsages, load_internal_asset, uuid_handle};
 use bevy::core_pipeline::FullscreenShader;
-use bevy::image::ImageSampler;
+use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::EnvironmentMapLight;
 use bevy::prelude::*;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
@@ -30,6 +30,28 @@ use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, R
 
 use crate::camera::MainCamera;
 use crate::look::LookTexture;
+
+/// The world's baked shadow visibility in three time-of-day channels.
+#[derive(Resource, Clone, ExtractResource)]
+pub struct SolarIrradiation(pub Handle<Image>);
+
+fn solar_irradiation_image(assets: &std::path::Path) -> Image {
+    let path = assets.join(asset_format::paths::SOLAR_IRRADIATION);
+    let mut image = match asset_format::texture::Texture::read(&path) {
+        Ok(texture) => crate::texture::gpu_image(&texture, false).unwrap_or_default(),
+        Err(error) => {
+            info!("baked world shadow: {error}; using full visibility");
+            Image::default()
+        }
+    };
+    // The SystemModel material wraps U and V and filters both linearly.
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        ..ImageSamplerDescriptor::linear()
+    });
+    image
+}
 
 const SHADER: Handle<Shader> = uuid_handle!("4b7e0c2d-93a1-4f58-b6d2-8e1f3a9c5d70");
 /// `botw::normal_map`: the models' normal from their normal maps.
@@ -66,9 +88,14 @@ impl Plugin for DeferredLightPlugin {
         let mut images = app.world_mut().resource_mut::<Assets<Image>>();
         let image = images.add(noise_image(&noise));
         let mean = images.add(Image::new_target_texture(1, 1, CUBE_MEAN_FORMAT, None));
+        let solar = images.add(solar_irradiation_image(&self.assets));
         app.insert_resource(SsaoNoise(image))
             .insert_resource(CubeMean(mean))
-            .add_plugins(ExtractResourcePlugin::<CubeMean>::default());
+            .insert_resource(SolarIrradiation(solar))
+            .add_plugins((
+                ExtractResourcePlugin::<CubeMean>::default(),
+                ExtractResourcePlugin::<SolarIrradiation>::default(),
+            ));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
