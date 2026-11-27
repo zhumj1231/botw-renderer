@@ -541,7 +541,8 @@ different combiner bytes, e.g. `ps_c2b1c7dcbefe` used by 200 emitters).
 
 ```
 L   = Sem14.rgb + cus1[0x01C] · reserved[0x004] · cube(N = Sem11, lod = cus1[0x010]).rgb · k
-      (k = 1 or 1 − Sem16.w; the cube term is absent in rain/snow programs)
+      (k = 1 or 1 − Sem16.w; some weather variants omit the cube term.
+      See the live snow draw below for a variant with a cube lookup.)
 C   = combine(…) · L
 C   = lerp(C, cus1[0x1A0].rgb, Sem16.y)        // height fog colour
 C   = lerp(C, Sem15.rgb, Sem15.w)               // LUT fog
@@ -725,3 +726,33 @@ height buffer or a camera-relative emitter. Trace normals, depth
 tests, texture animation, lifetime, blend mode and surface masks.
 Compare exposed slopes with sheltered ground and water to resolve
 which receivers participate. Keep recordings and captures local.
+
+## Live snowfall in frame 123839
+
+Wii U JP v208, Cemu 1.26.2f Vulkan, zero graphics packs. The final
+view shows falling flakes over a snowy slope at 22:30. Start with
+the archived [FieldSnow emitter data](weather.md#31-rain-and-snow--the-rainsnow-tree),
+then use pixel history on the main 1280×720 R11G11B10F scene color
+(`ResourceId::32641` in this capture).
+
+- At pixel (995, 202), E10370 raises linear RGB from approximately
+  (0.0205, 0.0605, 0.0703) to (0.1367, 0.1934, 0.2188). Comparing
+  the scene color after E10369 and E10370 finds 2,177 changed pixels.
+  The isolated mask shows separate round flakes. This ties the draw
+  to visible snowfall.
+- E10370 uses three vertices per instance and submits 156 instances.
+  It writes directly into HDR scene color after opaque composition.
+  Depth testing is LessEqual against the full-resolution D32 target,
+  with depth writes disabled. RGB blending is
+  `dst + src.rgb × src.alpha`.
+- The captured pixel program samples the same 2D texture at PS0 and
+  PS1, an R16F scene depth texture at PS4, and the cubemap array
+  `tex_3cbf0800_fmt0816` at PS10. The PS10 lookup is present in live
+  snowfall. Its contribution and the depth-fade constants still need
+  tracing. The PS10 resource is distinct from the terrain composition
+  cubemap in this frame.
+
+One identified draw establishes the rendering route for these flakes.
+Mapping its instance data to `Flake_Near` or `Flake_Far` and
+identifying the other visible snow draws remain open. Keep the
+capture, shaders and pixel-difference mask local.

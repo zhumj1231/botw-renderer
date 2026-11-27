@@ -808,9 +808,9 @@ hashes local.
 
 ### Live geometry capture camera
 
-The JP v208 sequences above and one additional snowy-night capture
-contain six frames with indexed geometry draws into a separate 64×64
-R11G11B10F cubemap at mip 0. Disassemble
+The JP v208 sequences above, an additional snowy-night capture, and a
+three-frame Target Control follow-up contain nine frames with indexed
+geometry draws into a separate 64×64 R11G11B10F cubemap at mip 0. Disassemble
 the Cemu-translated vertex shader of frame 85917 E269 and read the
 live vertex constant buffer at the bound descriptor offset. The shader
 uses remapped vec4s 2–4 for model-to-world, 5–7 for world-to-face-view,
@@ -833,16 +833,22 @@ from Field Expand in the same capture.
 | 100801 | E295 | `tex_3ce62000_fmt0816` | 4 | −Z | (3030.518184, 355.656985, −1516.532683) | 0.614 |
 | 100802 | E261 | `tex_3ce62000_fmt0816` | 5 | +Z | (3030.518184, 355.656985, −1516.532683) | 0.597 |
 | 123839 (snowy night) | E264 | `tex_3ce62000_fmt0816` | 2 | +Y | (−3587.550965, 438.510616, −3008.733692) | 0.519 |
+| 133790 | E252 | `tex_3ce3d800_fmt0816` | 3 | −Y | (−3677.659130, 252.102966, −2803.402845) | 0.046 |
+| 133791 | E323 | `tex_3ce3d800_fmt0816` | 4 | −Z | (−3677.659130, 252.102966, −2803.402755) | 0.118 |
+| 133792 | E280 | `tex_3ce3d800_fmt0816` | 5 | +Z | (−3677.659130, 252.102966, −2803.402755) | 0.118 |
 
-The matching rows recur exactly across 77 sampled shader and frame
+The matching rows recur exactly across 112 sampled shader and frame
 pairs in the table, counted once per shader per frame.
 Stationary faces 0 and 1 share a capture position. Movement faces 4
 and 5 also share a position while the main camera translates. The
-capture and parallax centers agree to within 7.4 mm in these six
+capture and parallax centers agree to within 7.4 mm in these nine
 frames. The turning frame resolves a nonzero difference between the
 two centers. Its cause and the timing of their recentering over a
-longer displacement remain open. The capture view for face 3
-was not recovered from this set.
+longer displacement remain open. All six face directions are now
+covered. In the new consecutive captures, the raw geometry writes
+advance 3 → 4 → 5 while the terrain refresh advances (0,1) → (2,3)
+→ (4,5). This captures both schedules against the same raw
+attachment, `tex_3ce3d800_fmt0816`, in one sequence.
 
 The sampled projection rows read as a centered 90° square projection.
 Their depth terms are approximately `z_clip = −1.00001991 z_view −
