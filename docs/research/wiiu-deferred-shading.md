@@ -123,6 +123,56 @@ display passes remain to be matched. This baseline is suitable for
 comparing the atmospheric and display checkpoints to the same view
 in clear night and rain.
 
+### Fixed-camera clear day and night in Tarrey Town
+
+Both captures are Wii U JP v208 in Cemu 1.26.2f Vulkan with zero
+graphics packs. The two frames were taken in one session while the
+character stood still. Frame 4188 is about 17:30 and frame 12902 is
+about 22:20, as read on the game HUD. The saved location is Tarrey
+Town. The Hateno capture at frame 3830 remains a separate baseline.
+
+Match the translated field Expand fragment program by byte digest
+across frame 4188 EID 10327 and frame 12902 EID 8677. Context vectors
+11–13 and environment vectors 43–45 encode the camera-to-world
+rows. The largest absolute difference in the 3×3 basis is
+`9.60e-6`, and the Euclidean distance between the two positions is
+about `0.000245 m`. The near/far depths and field of view match.
+The raw transforms are nearly equal, with a small difference even
+though no movement or look input was sent between the captures.
+
+The field pre-shading fragment program also matches by byte digest,
+at EID 11389 in the day frame and EID 9763 in the night frame.
+Both use a 640×360 active viewport. The same three pixels remain
+class 4 at both times, with a depth change below 0.003 m. All RGB
+values below are linear fog from RT1. Transmission is RT0.B as an
+8-bit code value.
+
+| Half pixel | Approximate view depth (m) | Transmission day → night | Fog RGB day | Fog RGB night |
+| --- | ---: | ---: | --- | --- |
+| (272, 237) | 14 | 215 → 237 | (0.03174, 0.04395, 0.03418) | (0.00388, 0.00989, 0.00879) |
+| (236, 188) | 66 | 186 → 188 | (0.08887, 0.11816, 0.07813) | (0.01404, 0.03613, 0.03223) |
+| (493, 154) | 210 | 149 → 131 | (0.12500, 0.16602, 0.11133) | (0.02197, 0.05713, 0.05176) |
+
+The Expand environment block's main-light RGB changes from
+`(7.0, 4.55686, 3.15)` to `(0.765, 1.44, 1.8)`. The night
+fog is dimmer at all three points while transmission changes in
+both directions depending on depth. The files, replay images,
+camera constants and raw sample records remain local.
+
+The same analyzer and display fragment programs match by byte digest
+as well. The analyzer is EID 11296 by day and EID 9670 at night. Both
+bind main-light alpha 1. The average of the four R16F exposure samples
+changes from 0.936401 to 0.739746. The observed first R11G11B10F
+analyzer texel changes from `(0.929688, 1, 1)` to
+`(0.734375, 0.882813, 1)`. These are the measured outputs. The
+10-bit display draws (EID 13867 and EID 12258) have identical shader
+bytes and bound display constants. At the background screen pixel
+(640, 45), the main HDR RGB moves from `(0.378906, 0.488281, 0.351563)`
+to `(0.024414, 0.116211, 0.111328)`. Display RGB codes move from
+`(304, 403, 276)` to `(20, 114, 109)`. For these two views the
+input signal changes with time of day while the tested display
+draw's curve and controls match.
+
 ## Outdoor material paths
 
 The archived frame above establishes the shared render targets and the

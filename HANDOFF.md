@@ -110,9 +110,9 @@ with the event map as a reference for matching pipeline state.
 2. **Measure outdoor ambient and atmosphere.** The clear-day
    [LightAnalyzer readback](docs/research/wiiu-character-shading.md#clear-day-lightanalyzer-readback-in-frame-3830)
    and the [clear-day atmosphere samples](docs/research/wiiu-deferred-shading.md#clear-day-atmosphere-in-frame-3830)
-   are verified. Compare a matched clear night first and a matched rainy daytime view when
-   new captures are available. Use Hebra snowfall for the precipitation
-   draw and cold-region terrain.
+   are verified. The [Tarrey Town day/night pair](docs/research/wiiu-deferred-shading.md#fixed-camera-clear-day-and-night-in-tarrey-town)
+   provides matched camera, terrain fog, LightAnalyzer and display samples.
+   Capture matched rainy daylight and Hebra snowfall for the weather checks.
 3. **Trace remaining material paths.** Frame 3830 establishes the
    [terrain overlap weights](docs/research/wiiu-field-shading.md#live-terrain-material-sample-in-frame-3830)
    and the [foliage route](docs/research/wiiu-character-shading.md#live-class-7-foliage-in-frame-3830).
