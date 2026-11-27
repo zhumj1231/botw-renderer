@@ -88,7 +88,8 @@ JP v208 RPX `0x034009f4–0x03400a80` sets `e53.z` to the current shadow
 range minus 20 m and `e53.w` to that range minus 40 m. The JP `Main`
 graphics configuration defines three cascades and
 `depth_shadow_near_0_0` through `depth_shadow_near_0_3` values of 2, 32,
-64 and 200 m.
+64 and 200 m. These are configuration inputs. The JP v208 main-view
+update overwrites the view splits before drawing.
 
 The update at `0x038a616c–0x038a62b0` also writes a set of view splits at
 runtime. Below, `state` is the shadow object in register `r29`, and the
@@ -107,17 +108,53 @@ second_split = lerp(first_split, far_target, state[0x38])
 state[0x50] = current_far
 ```
 
-The range guard is assembled at `0x038a5b18–0x038a5b6c`. The 16-bit flags
-are at `state + 0xa`. The bytes are the length and capacity of the view
-history. The constructor at `0x038a5314–0x038a531c` sets them to 0 and 3.
-The reset at `0x038a5458` clears the length, and the history update at
-`0x038a57e8–0x038a58cc` shifts the saved view records and increases the
-length up to the capacity. Range adjustment requires that history to be
-full. The routine stores the second split from the target range and uses
-the current range for the last split and the two environment fade starts.
-The source of the adjustment flag and the actual distances for Hateno
-still need verification. The archived Cemu capture
-[shows three 720 × 720 maps](wiiu-deferred-shading.md).
+The guard at `0x038a5b18–0x038a5b6c` tests bit `0x20` of the halfword at
+`state + 0xa`. The bytes are the length and capacity of the view history,
+initialized to 0 and 3 at `0x038a5314–0x038a531c`. The reset at
+`0x038a5458` clears the length. The update at `0x038a57e8–0x038a58cc`
+shifts the saved view records and grows the length up to the capacity.
+Filling the history satisfies one of the two guard conditions. The
+routine uses the target range for the second split and the current range
+for the last split and both environment fade starts.
+
+#### Main-view range selection in JP v208
+
+KSys allocates the object at `0x034074a0`, constructs it at
+`0x034074bc` and stores it at `KSys + 0x84c`. The constructor zeros the
+flags at `0x038a5248`. The initializer at `0x038a56f0` and the scene
+preset routine at `0x038a54d8` preserve them. The other traced writes to
+this object's flags are:
+
+| Code | Effect on the halfword at `state + 0xa` |
+| --- | --- |
+| `0x034094dc–0x0340959c` | Clears or sets the scene mode bit `0x80`. The update tests that bit at `0x038a5930` when computing the near offset. |
+| `0x020786d4–0x02078710` | Sets `0x100` for `ManualNearValue` and `0x200` for `ManualFarValue`, when the corresponding request is enabled. |
+| `0x038a5a64–0x038a5a6c`, `0x038a61a8–0x038a61ac` | Clears the manual far and near request bits, respectively, when the requests are consumed. |
+
+All these paths preserve bit `0x20`. The checked main-view path therefore
+uses the branch that copies `far_target` to `current_far`. This is a static
+result for the stock JP v208 executable. The available frame record
+does not show the CPU flag or establish the range used in a specific
+Hateno view.
+
+The target itself is still calculated each frame. At
+`0x038a5a2c–0x038a5a98`, the update starts from the scene preset at
+`state + 0x48`, applies the near-offset adjustment and far extension,
+then stores the result at `state + 0x58`. A manual far request can override
+the preset for the calculation. The preset setup at `0x038a5554–0x038a56d4`
+uses a 2 m first split before the near offset and a 0.15 interpolation factor
+for the second split. It selects base far distances of 120, 300, 50 or
+220 m for internal modes 0 through 3. The 120 m mode with no offsets, far
+extension or manual request gives splits of 2 m and 19.7 m, and fade
+starts of 100 m and 80 m. These are predictions for those inputs.
+
+The update at `0x038a5994–0x038a59ec` also selects shadow map dimensions.
+It uses a separate index at `state + 9` into the square sizes initialized
+at `0x038a5758–0x038a577c` (480, 720, 720, 896 and 2048), and has a
+2048 override for scene mode 2. The constructor sets that index to 2.
+`Main` lists 680 × 680 in the settings file. The archived Cemu capture in
+the [pass inventory](wiiu-deferred-shading.md) shows three 720 × 720 maps,
+consistent with the initialized index.
 
 ```text
 Expand.x = sat(lerp(W⁴, Sh, sat(sm2.z + 1 − sat(0.05(z − e53.w))))·depth_shadow_scale
