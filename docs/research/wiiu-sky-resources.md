@@ -160,7 +160,51 @@ The research sky probe.py (upstream reference: `../../tools/research/sky_probe.p
 python3 tools/research/sky_probe.py /path/to/00419-stage1.code
 ```
 
-Additional narrow result: `sky_copy_inscatter`, `LOCAL_STEP=1`, binary 401, code `[0xa2100,0xa22a0)`It contains two TEX instructions for the same XYZ coordinates.`+0x180`) reads sampler 1, `cTexDeltaSR`in `R1.rgb` and masks the alpha; the second`+0x190`) reads sampler 0, `cTexDeltaSM`, recording only him **R in R1.a**The subsequent export is giving away. `R1.xyzw`This is a direct swizzle/write mask of bytes: packed result has `(DeltaSR.rgb, DeltaSM.r)`It's not the sum of the RGB of the two textures. DeltaSR/DeltaSM filters and formulas are not recovered.
+In `sky_copy_inscatter`, `LOCAL_STEP=1` (PS 401), both samples use the same
+XYZ coordinates. The first reads `cTexDeltaSR` into RGB, and the second
+reads the red channel of `cTexDeltaSM` into alpha. The pass exports
+`(DeltaSR.rgb, DeltaSM.r)`.
+
+### Wii U v208 shipped table and the precompute passes
+
+The stock JP v208 sky setup calls the `sky.skybin` loader at
+`0x033f393c`. The loader checks that the file covers the three prepared
+surface sizes, copies them at `0x033f346c`, `0x033f3498` and
+`0x033f34c4`, then clears bit `0x10000` of the sky flags at
+`0x033f3540`. The precompute dispatcher at `0x033f59d0` calls the full
+regeneration when either bit in `0x30000` is set and the view is ready.
+The static preset caller at `0x0364b96c–0x0364b974` passes 0 for the
+rebuild argument. The dynamic palette setter at `0x033f7a98` updates
+the scattering amplifiers and asymmetry. KSys then calls the separate
+view bake at `0x03402028`. This accounts for how the loaded scattering
+table stays in use as time and weather change. A rebuild request can
+select the precompute chain. This is a static trace of both paths.
+
+The JP `uking_pass_shader` has the following precompute kernels. The
+loop counts come from the compiled GX2 loop constants, and the steps
+and accumulation weights come from the ALU instructions.
+
+| Stage | Evidence and operation |
+| --- | --- |
+| Transmittance (PS 385) | 125 iterations unrolled by four, with a distance step of `d / 500`. Trapezoidal integration of the exponential density profiles gives optical depths for Rayleigh and Mie. The final ALU exports the exponential of the negated RGB optical depth after multiplying by the coefficients. A ray below the ground horizon uses a large optical depth. |
+| First-order scattering (PS 393) | 10 iterations unrolled by five, with `ds = d / 50`. For each endpoint at sample distance `s`, use `r_s = sqrt(r² + 2*r*mu*s + s²)` and `mu_s_sample = (r*mu_s + s*nu)/r_s`. Multiply sun transmittance and segment transmittance by `exp(-(r_s - Rg)/H)` for each density height. ALU 74 and its counterparts zero the contribution when the sun ray at the sample is below the ground horizon. Accumulate neighboring endpoints with `0.5 * ds`, multiply the two RGB sums by their scattering coefficients, and export separate Rayleigh and Mie targets in one export burst. |
+| Higher-order scattering density (PS 397 and 399) | Integrate 16 polar rows, with 32 azimuth samples per row. The polar angle starts at `0.5 * pi/16`, the azimuths are unrolled, and the solid-angle factor is `sin(theta) * (pi/16)^2`. PS 397 reads separate first-order Rayleigh and Mie inputs. PS 399 reads the previous order as one scattering field. Both also read irradiance and transmittance for the ground term. |
+| Higher-order ray integration (PS 395) | 10 iterations unrolled by five, again with `ds = d / 50`. Sample the scattering density from `cTexDeltaJ` at the ray point, interpolate between neighboring sun-view slices, multiply by segment transmittance, and accumulate trapezoids. |
+| Packing and higher-order copy (PS 401 and 403) | First pack Rayleigh RGB and Mie red. For a higher order, divide the integrated RGB by the Rayleigh phase function and output alpha 0, so the copy contribution is in RGB. |
+
+The view bake (PS 413) reads the packed table and applies the current
+phase functions, palette amplifiers and sun color. The atmosphere
+initialization also sets the Mie adjustment weight at SkyMgr `+0x2178`
+to 1 (`0x0364f3d4`, `0x0364f5c4`, constant at `0x10300db8`).
+The palette update at `0x036478ac–0x036478c0` mixes the Mie amplifier
+toward 1 by the complementary weight, giving an identity at reset.
+
+The independent implementation consumes the decoded shipped table in
+`sky_lut.rs`. The existing reference test ran with the locally baked
+JP v208 table and passed its 1% comparison at the zenith and near the
+horizon. The renderer's final brightness conversion still uses a fit.
+The test compares the view-bake calculation and leaves the visible sky
+and fog values in a specific Hateno frame for the capture checklist.
 
 ## CPU chain → LUT of the sky (matching Wii U, 2026-09-28)
 
