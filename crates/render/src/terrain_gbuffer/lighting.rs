@@ -2,13 +2,18 @@
 use std::collections::HashMap;
 
 use bevy::asset::{load_internal_asset, uuid_handle};
-use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d};
+use bevy::core_pipeline::core_3d::{Opaque3d, main_opaque_pass_3d, main_transparent_pass_3d};
 use bevy::core_pipeline::schedule::{Core3d, Core3dSystems};
+use bevy::ecs::system::{SystemParamItem, lifetimeless::SRes};
 use bevy::pbr::deferred::DeferredLightingLayout;
-use bevy::pbr::{MeshPipelineKey, MeshViewBindGroup, ViewKeyCache};
+use bevy::pbr::{DrawMaterial, MeshPipelineKey, MeshViewBindGroup, ViewKeyCache};
 use bevy::prelude::*;
 use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::render::render_asset::RenderAssets;
+use bevy::render::render_phase::{
+    DrawFunctions, PhaseItem, RenderCommand, RenderCommandResult, RenderCommandState,
+    TrackedRenderPass,
+};
 use bevy::render::render_resource::binding_types::{sampler, texture_2d, uniform_buffer};
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
@@ -21,6 +26,7 @@ use crate::deferred_light::{CubeMean, SsaoNoise};
 use crate::look::LookTexture;
 
 use super::{CLASS_DEPTH, FIELD_CLASS, Stages, Targets, class_group, classify, color, target};
+use super::geometry::{TerrainMeshes, draw_geometry};
 
 const SHADER: Handle<Shader> = uuid_handle!("e9b6a2f4-b244-46a5-bf90-36303dcd704a");
 const SHADOW: TextureFormat = TextureFormat::Rgba8Unorm;
@@ -41,14 +47,64 @@ impl Plugin for TerrainLightingPlugin {
             return;
         };
         render_app
-            .add_systems(RenderStartup, init_layouts)
+            .add_systems(RenderStartup, (init_layouts, register_opaque_draw))
             .add_systems(
                 Core3d,
-                draw_lighting
-                    .after(main_opaque_pass_3d)
-                    .before(main_transparent_pass_3d)
+                (
+                    prepare_lighting
+                        .after(draw_geometry)
+                        .before(main_opaque_pass_3d),
+                    draw_lighting
+                        .after(main_opaque_pass_3d)
+                        .before(main_transparent_pass_3d),
+                )
                     .in_set(Core3dSystems::MainPass),
             );
+    }
+}
+
+fn register_opaque_draw(world: &mut World) {
+    // Use the normal material draw for other batches and views. Prepass and
+    // shadow phases have their own draw functions.
+    let draw = RenderCommandState::<Opaque3d, (SkipDeferredTerrain, DrawMaterial)>::new(world);
+    world
+        .resource::<DrawFunctions<Opaque3d>>()
+        .write()
+        .add_with::<DrawMaterial, _>(draw);
+}
+
+struct SkipDeferredTerrain;
+
+impl RenderCommand<Opaque3d> for SkipDeferredTerrain {
+    type Param = (SRes<TerrainMeshes>, Local<'static, (bool, bool)>);
+    type ViewQuery = Option<&'static Targets>;
+    type ItemQuery = ();
+
+    fn render<'w>(
+        item: &Opaque3d,
+        targets: Option<&'w Targets>,
+        _: Option<()>,
+        (terrain, mut reported): SystemParamItem<'w, '_, Self::Param>,
+        _: &mut TrackedRenderPass<'w>,
+    ) -> RenderCommandResult {
+        let Some(targets) = targets.filter(|targets| targets.lighting.is_some()) else {
+            return RenderCommandResult::Success;
+        };
+        if !terrain.contains(item.main_entity()) {
+            return RenderCommandResult::Success;
+        }
+        if targets.lighting_passes.is_some() {
+            if !reported.0 {
+                debug!("Terrain forward opaque draw skipped: deferred geometry and lighting ready");
+                reported.0 = true;
+            }
+            return RenderCommandResult::Skip;
+        }
+        if !reported.1 {
+            debug!("Terrain forward opaque fallback selected: deferred geometry or lighting pending");
+            reported.1 = true;
+        }
+        RenderCommandResult::Success
     }
 }
 
@@ -184,11 +240,20 @@ fn queue_pipelines(
 struct LightingState {
     pipelines: HashMap<MeshPipelineKey, [CachedRenderPipelineId; 2]>,
     clouds: UniformBuffer<CloudParams>,
-    logged: bool,
 }
 
-fn draw_lighting(
-    view: ViewQuery<(&ViewTarget, &ExtractedView, &MeshViewBindGroup, &Targets)>,
+pub(super) struct LightingPasses {
+    half: RenderPipeline,
+    full: RenderPipeline,
+    pre: RenderPipeline,
+    compose: RenderPipeline,
+    classes: BindGroup,
+    pre_inputs: BindGroup,
+    compose_inputs: BindGroup,
+}
+
+fn prepare_lighting(
+    view: ViewQuery<(&ViewTarget, &ExtractedView, &MeshViewBindGroup, &mut Targets)>,
     stages: Res<Stages>,
     pbr: Res<DeferredLightingLayout>,
     keys: Res<ViewKeyCache>,
@@ -203,10 +268,12 @@ fn draw_lighting(
         Option<Res<CubeMean>>,
         Option<Res<CloudShadows>>,
     ),
-    mut render: RenderContext,
     mut state: Local<LightingState>,
 ) {
-    let (view_target, view, bindings, out) = view.into_inner();
+    let (_, view, _, mut out) = view.into_inner();
+    if !out.geometry_ready {
+        return;
+    }
     let (Some(out_lit), Some(&key)) = (&out.lighting, keys.get(&view.retained_view_entity)) else {
         return;
     };
@@ -266,14 +333,43 @@ fn draw_lighting(
         &compose_inputs,
     );
 
-    let classes = class_group(&cache, &device, &stages, out);
-    classify(&mut render, "terrain class half", half, &classes, &out.half);
+    let classes = class_group(&cache, &device, &stages, &out);
+    out.lighting_passes = Some(LightingPasses {
+        half: half.clone(),
+        full: full.clone(),
+        pre: pre.clone(),
+        compose: compose.clone(),
+        classes,
+        pre_inputs,
+        compose_inputs,
+    });
+}
+
+fn draw_lighting(
+    view: ViewQuery<(&ViewTarget, &MeshViewBindGroup, &Targets)>,
+    mut render: RenderContext,
+    mut logged: Local<bool>,
+) {
+    let (view_target, bindings, out) = view.into_inner();
+    let (Some(out_lit), Some(passes)) = (&out.lighting, &out.lighting_passes) else {
+        return;
+    };
+    let LightingPasses {
+        half,
+        full,
+        pre,
+        compose,
+        classes,
+        pre_inputs,
+        compose_inputs,
+    } = passes;
+    classify(&mut render, "terrain class half", half, classes, &out.half);
     draw(
         &mut render,
         "field half pre-shading",
         pre,
         bindings,
-        &pre_inputs,
+        pre_inputs,
         &out.half,
         &[
             color(&out_lit.shadow.default_view),
@@ -284,19 +380,19 @@ fn draw_lighting(
             color(&out_lit.depth.default_view),
         ],
     );
-    classify(&mut render, "terrain class full", full, &classes, &out.full);
+    classify(&mut render, "terrain class full", full, classes, &out.full);
     draw(
         &mut render,
         "field HDR composition",
         compose,
         bindings,
-        &compose_inputs,
+        compose_inputs,
         &out.full,
         &[Some(view_target.get_unsampled_color_attachment())],
     );
-    if !state.logged {
+    if !*logged {
         info!("Terrain half pre-shading and class Equal HDR composition active");
-        state.logged = true;
+        *logged = true;
     }
 }
 

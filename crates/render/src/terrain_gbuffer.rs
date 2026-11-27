@@ -185,6 +185,8 @@ struct Targets {
     full: CachedTexture,
     equal: Option<CachedTexture>,
     lighting: Option<lighting::LightingTargets>,
+    geometry_ready: bool,
+    lighting_passes: Option<lighting::LightingPasses>,
 }
 
 fn prepare_targets(
@@ -225,6 +227,8 @@ fn prepare_targets(
                 .then(|| get("terrain_class_equal", TextureFormat::Rg11b10Ufloat, full)),
             lighting: matches!(mode, TerrainGBuffer::Lighting)
                 .then(|| lighting::allocate_targets(half, get)),
+            geometry_ready: false,
+            lighting_passes: None,
         });
     }
 }

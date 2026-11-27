@@ -33,6 +33,12 @@ use super::{
 #[derive(Resource, Default)]
 pub(super) struct TerrainMeshes(HashMap<MainEntity, (AssetId<Mesh>, Vec3)>);
 
+impl TerrainMeshes {
+    pub(super) fn contains(&self, entity: MainEntity) -> bool {
+        self.0.contains_key(&entity)
+    }
+}
+
 pub(super) fn extract_meshes(
     tiles: Extract<Query<(Entity, &Mesh3d, &GlobalTransform), With<TerrainTile>>>,
     mut meshes: ResMut<TerrainMeshes>,
@@ -167,7 +173,7 @@ impl Default for Batch {
 pub(super) fn draw_geometry(
     view: ViewQuery<
         (
-            &Targets,
+            &mut Targets,
             &ViewDepthTexture,
             &ViewUniformOffset,
             &RenderVisibleEntities,
@@ -183,17 +189,24 @@ pub(super) fn draw_geometry(
     mut render: RenderContext,
     mut batch: Local<Batch>,
 ) {
-    let (out, depth, offset, visible) = view.into_inner();
+    let (mut out, depth, offset, visible) = view.into_inner();
     let (Some(view_binding), Some(visible)) = (views.uniforms.binding(), visible.get::<Mesh3d>())
     else {
         return;
     };
     batch.offsets.clear();
     let mut draws = Vec::new();
+    // A GPU-culled tile is outside the list this pass can draw.
+    let mut visible_tiles = visible
+        .entities_gpu_culling
+        .keys()
+        .filter(|&&entity| geometry.terrain.contains(entity))
+        .count();
     for &(_, entity) in &visible.entities_cpu_culling {
         let Some(&(mesh_id, translation)) = geometry.terrain.0.get(&entity) else {
             continue;
         };
+        visible_tiles += 1;
         let (Some(mesh), Some(vertices), Some(instance)) = (
             geometry.meshes.get(mesh_id),
             geometry.allocator.mesh_vertex_slice(&mesh_id),
@@ -277,6 +290,7 @@ pub(super) fn draw_geometry(
     let Some(offsets) = batch.offsets.buffer() else {
         return;
     };
+    let geometry_ready = !draws.is_empty() && draws.len() == visible_tiles;
     pass.set_vertex_buffer(1, offsets.slice(..));
     for draw in draws {
         pass.set_render_pipeline(draw.pipeline);
@@ -298,4 +312,6 @@ pub(super) fn draw_geometry(
             );
         }
     }
+    drop(pass);
+    out.geometry_ready = geometry_ready;
 }
