@@ -48,6 +48,26 @@ The reference path for lighting is the same-view forward capture above.
 The Wii U capture is the reference for pass order, formats, and lighting
 behavior.
 
+## Outdoor material paths
+
+The archived frame above establishes the shared render targets and the
+order of the opaque stages. The material inputs below are from the v208
+shader and RPX studies. The independent paths describe the current source.
+
+| Scene element | Wii U path | Independent renderer |
+| --- | --- | --- |
+| Terrain and trails | `uking_terrain` writes class 4 and its albedo, view normal and gloss. The field passes consume these through Expand, pre-shading and HDR composition. | `--terrain-deferred` writes terrain to RT0/1/3 and runs the class-4 lighting chain. The meshes still use skirts at LOD edges. [Terrain inputs](wiiu-field-shading.md#terrain-mesh-transitions-and-material-inputs) |
+| Static objects | Rock and trunk material variants with class 4 also use the opaque field passes. Their G-buffer flags control AO and the contour term. | `ObjectShading` evaluates field lighting per mesh fragment. These materials still need a writer for the shared terrain G-buffer. [Object material variants](wiiu-field-shading.md#the-result) |
+| Grass and tree crowns | The recovered grass blade, cross and cover variants write class 4 with the AO/contour flag off. Crown and distant-tree variants write class 7 and use `field_leaf`. | Deformed blades, grass cards and tree materials shade through their forward paths. Grass draws over the composed terrain. [Grass and tree G-buffer](wiiu-field-shading.md#grass-and-distant-trees-g-buffer-uking_grass-uking_tree) |
+| Water | `TeraWater` writes class 22, albedo and normal, and stores transmitted scene color. The water pre-shading and class-6 composition consume the shared inputs. | The transmissive stage samples the composed scene and its depth. The water shader performs its own refraction and final lighting. [Water inputs and outputs](wiiu-water-variants.md) |
+| Sky and aerial perspective | The sky setup supplies environment colors, cube reflection, cloud shadow and fog inputs to the material passes. | Day/night palettes, sky and cloud systems supply the view cubemap, look texture and cloud shadow map. The host shares the field haze computation across materials. [Sky resources](wiiu-sky-resources.md) |
+
+The shared opaque chain can be validated with class 4 before adding other
+writers. Grass also needs its deformed coverage to agree with the depth
+attachment. Class 7 has separate visibility and pre-shading rules. The water
+chain depends on the second shared lighting layer used when reconstructing
+what is beneath the surface.
+
 ## Experimental terrain lighting
 
 Capture both modes with the same Hateno preset, time, weather and
@@ -63,9 +83,10 @@ culling range. Its perspective depth buffer uses reversed infinite depth,
 so compare reconstructed view-space distances across the two renderers.
 
 After the geometry pass, the D16 half-resolution classification selects
-field pixels for pre-shading. It computes shadow (sun and cloud attenuation,
-wetness, fog transmission and sky visibility), fog inscattering and diffuse
-ambient light from the shared field and haze formulas. The half-resolution
+field pixels for Expand and pre-shading. Expand writes sun visibility and
+SSAO. Pre-shading reads those values and applies cloud attenuation, wetness,
+fog transmission, sky visibility, fog inscattering and diffuse ambient
+light from the shared field and haze formulas. The half-resolution
 normal guide is the mean of the three encoded normal channels, as observed
 in EID 11019. Original PS 32 uses decoded RT3 normals with the view-space
 ray for its incident angle. The host stores the mapped normal in view space
@@ -116,10 +137,22 @@ half NLD. Field PS 128 reads half NLD for its SSAO taps. Its VS indexes
 the 4×4 rotation texture once per half-resolution pixel.
 
 The host computes these depth taps from the matching half-grid centres
-in Bevy's depth prepass. Half classification and pre-shading share those
-centres so they select the same material. The pre-shading position follows
-the half-pixel ray. The host evaluates AO directly in pre-shading with
-linear view metres and has no separate Expand target.
+in Bevy's depth prepass. Half classification, Expand and pre-shading
+share those centres, and the position follows the half-pixel ray.
+
+The independent terrain Expand pass uses an RGBA8 UNORM attachment.
+Red carries Bevy's sun-shadow visibility, blue carries the existing
+SSAO evaluated in linear view metres, and alpha is 1 for field terrain.
+Green is unused by this path. Pre-shading point-loads the same texel.
+The native format is recorded in the target descriptors below. The host
+still uses Bevy's cascade lookup and the existing 150 m AO cutoff. Its
+full-resolution fallback evaluates visibility directly when the four
+half-resolution terrain taps are absent.
+
+With the same offscreen Vulkan invocation before and after the split, the
+1280×720 Hateno images changed by at most one code value per RGB channel.
+There were 359 changed channels in clear weather at 10:00 and 19 in rain
+at 16:00, out of 2,764,800 channels per image.
 
 The D16 classification identifies the field pixels for comparisons.
 Use `--freeze-animation` for renderer A/B screenshots. It leaves the

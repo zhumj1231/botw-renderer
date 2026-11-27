@@ -1,4 +1,4 @@
-//! Half-resolution field lighting and full-resolution HDR composition.
+//! Half-resolution field visibility and lighting, then full-resolution HDR composition.
 use std::collections::HashMap;
 
 use bevy::asset::{load_internal_asset, uuid_handle};
@@ -29,6 +29,7 @@ use super::{CLASS_DEPTH, FIELD_CLASS, Stages, Targets, class_group, classify, co
 use super::geometry::{TerrainMeshes, draw_geometry};
 
 const SHADER: Handle<Shader> = uuid_handle!("e9b6a2f4-b244-46a5-bf90-36303dcd704a");
+const EXPAND: TextureFormat = TextureFormat::Rgba8Unorm;
 const SHADOW: TextureFormat = TextureFormat::Rgba8Unorm;
 const INDIRECT: TextureFormat = TextureFormat::Rg11b10Ufloat;
 const NORMAL_GUIDE: TextureFormat = TextureFormat::R8Unorm;
@@ -106,6 +107,7 @@ impl RenderCommand<Opaque3d> for SkipDeferredTerrain {
 }
 
 pub(super) struct LightingTargets {
+    expand: CachedTexture,
     shadow: CachedTexture,
     fog: CachedTexture,
     diffuse: CachedTexture,
@@ -118,6 +120,7 @@ pub(super) fn allocate_targets(
     mut get: impl FnMut(&'static str, TextureFormat, Extent3d) -> CachedTexture,
 ) -> LightingTargets {
     LightingTargets {
+        expand: get("field_half_expand", EXPAND, size),
         shadow: get("field_half_shadow", SHADOW, size),
         fog: get("field_half_fog", INDIRECT, size),
         diffuse: get("field_half_diffuse", INDIRECT, size),
@@ -128,6 +131,7 @@ pub(super) fn allocate_targets(
 
 #[derive(Resource)]
 struct LightingLayouts {
+    expand: BindGroupLayoutDescriptor,
     pre: BindGroupLayoutDescriptor,
     compose: BindGroupLayoutDescriptor,
 }
@@ -162,8 +166,15 @@ fn init_layouts(mut commands: Commands) {
         .iter()
         .cloned(),
     );
+    let mut pre = base.to_vec();
+    pre.extend(
+        BindGroupLayoutEntries::with_indices(ShaderStages::FRAGMENT, ((13, float()),))
+            .iter()
+            .cloned(),
+    );
     commands.insert_resource(LightingLayouts {
-        pre: BindGroupLayoutDescriptor::new("field_preshading", &base),
+        expand: BindGroupLayoutDescriptor::new("field_expand", &base),
+        pre: BindGroupLayoutDescriptor::new("field_preshading", &pre),
         compose: BindGroupLayoutDescriptor::new("field_compose", &compose),
     });
 }
@@ -173,7 +184,7 @@ fn queue_pipelines(
     pbr: &DeferredLightingLayout,
     layouts: &LightingLayouts,
     key: MeshPipelineKey,
-) -> [CachedRenderPipelineId; 2] {
+) -> [CachedRenderPipelineId; 3] {
     // Reuse Bevy's view specialization for the camera, cube, shadows and clustered lights.
     let mut base = pbr.specialize(key);
     let defs = &mut base.fragment.as_mut().unwrap().shader_defs;
@@ -213,6 +224,7 @@ fn queue_pipelines(
         })
     };
     [
+        queue("expand", &layouts.expand, vec![target(EXPAND)]),
         queue(
             "preshade",
             &layouts.pre,
@@ -235,16 +247,18 @@ fn queue_pipelines(
 
 #[derive(Default)]
 struct LightingState {
-    pipelines: HashMap<MeshPipelineKey, [CachedRenderPipelineId; 2]>,
+    pipelines: HashMap<MeshPipelineKey, [CachedRenderPipelineId; 3]>,
     clouds: UniformBuffer<CloudParams>,
 }
 
 pub(super) struct LightingPasses {
     half: RenderPipeline,
     full: RenderPipeline,
+    expand: RenderPipeline,
     pre: RenderPipeline,
     compose: RenderPipeline,
     classes: BindGroup,
+    expand_inputs: BindGroup,
     pre_inputs: BindGroup,
     compose_inputs: BindGroup,
 }
@@ -285,12 +299,12 @@ fn prepare_lighting(
     ) else {
         return;
     };
-    let [pre, compose] = *state
+    let [expand, pre, compose] = *state
         .pipelines
         .entry(key)
         .or_insert_with(|| queue_pipelines(&cache, &pbr, &layouts, key));
-    let [Some(half), Some(pre), Some(full), Some(compose)] =
-        [stages.half.pipeline, pre, stages.full.pipeline, compose]
+    let [Some(half), Some(expand), Some(pre), Some(full), Some(compose)] =
+        [stages.half.pipeline, expand, pre, stages.full.pipeline, compose]
             .map(|id| cache.get_render_pipeline(id))
     else {
         return;
@@ -307,10 +321,21 @@ fn prepare_lighting(
         &cloud_map.sampler,
         state.clouds.binding().unwrap(),
     ));
+    let expand_inputs = device.create_bind_group(
+        "field_expand_inputs",
+        &cache.get_bind_group_layout(&layouts.expand),
+        &base,
+    );
+    let mut pre_inputs = base.to_vec();
+    pre_inputs.extend(
+        BindGroupEntries::with_indices(((13, &out_lit.expand.default_view),))
+            .iter()
+            .cloned(),
+    );
     let pre_inputs = device.create_bind_group(
         "field_preshade_inputs",
         &cache.get_bind_group_layout(&layouts.pre),
-        &base,
+        &pre_inputs,
     );
     let mut compose_inputs = base.to_vec();
     compose_inputs.extend(
@@ -334,9 +359,11 @@ fn prepare_lighting(
     out.lighting_passes = Some(LightingPasses {
         half: half.clone(),
         full: full.clone(),
+        expand: expand.clone(),
         pre: pre.clone(),
         compose: compose.clone(),
         classes,
+        expand_inputs,
         pre_inputs,
         compose_inputs,
     });
@@ -354,13 +381,24 @@ fn draw_lighting(
     let LightingPasses {
         half,
         full,
+        expand,
         pre,
         compose,
         classes,
+        expand_inputs,
         pre_inputs,
         compose_inputs,
     } = passes;
     classify(&mut render, "terrain class half", half, classes, &out.half);
+    draw(
+        &mut render,
+        "field half shadow and SSAO (Expand)",
+        expand,
+        bindings,
+        expand_inputs,
+        &out.half,
+        &[color(&out_lit.expand.default_view)],
+    );
     draw(
         &mut render,
         "field half pre-shading",
@@ -388,7 +426,7 @@ fn draw_lighting(
         &[Some(view_target.get_unsampled_color_attachment())],
     );
     if !*logged {
-        info!("Terrain half pre-shading and class Equal HDR composition active");
+        info!("Terrain half Expand and pre-shading, and class Equal HDR composition active");
         *logged = true;
     }
 }

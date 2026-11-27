@@ -25,6 +25,7 @@
 @group(2) @binding(10) var half_diffuse: texture_2d<f32>;
 @group(2) @binding(11) var half_normal_guide: texture_2d<f32>;
 @group(2) @binding(12) var half_depth_guide: texture_2d<f32>;
+@group(2) @binding(13) var half_expand: texture_2d<f32>;
 
 struct FieldPixel {
     pbr: PbrInput,
@@ -80,7 +81,18 @@ fn field_vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) cod
     return FieldVertexOutput(vec4(xy, f32(code) / 255.0, 1.0), uv);
 }
 
-fn shade_field(pixel: FieldPixel, light: MainLight, half_size: vec2<f32>) -> PreShading {
+fn field_visibility(pixel: FieldPixel, light: MainLight, half_size: vec2<f32>) -> vec4<f32> {
+    let pbr = pixel.pbr;
+    var ao = 1.0;
+    if -pixel.frame.p.z < 150.0 {
+        ao = ssao_on_grid(pixel.frame, ssao_noise, pbr.frag_coord.xy, half_size);
+    }
+    let sun = field_shadow(light, pbr, pixel.frame.p.z, 1.0, pixel.surface.translucent);
+    // Expand.x is sun visibility, .z is SSAO, and .w is neutral for terrain.
+    return vec4(sun, 0.0, ao, 1.0);
+}
+
+fn shade_field(pixel: FieldPixel, visibility: vec4<f32>) -> PreShading {
     let pbr = pixel.pbr;
     let point = pbr.world_position.xyz;
     let z = -pixel.frame.p.z;
@@ -91,23 +103,28 @@ fn shade_field(pixel: FieldPixel, light: MainLight, half_size: vec2<f32>) -> Pre
     // composition changes the normal and gloss.
     let wetness = field_wetness_at(look_texture, look, point, cover, surface.N.y, surface.flag);
     let open = sky_visibility(cover, point.y, surface.N.y, surface.flag, z);
-    var ao = 1.0;
-    if z < 150.0 {
-        ao = ssao_on_grid(pixel.frame, ssao_noise, pbr.frag_coord.xy, half_size);
-    }
     let shade = 1.0 - cloud_shadow(cloud_shadow_map, cloud_shadow_sampler, clouds, point);
-    let sun = field_shadow(light, pbr, pixel.frame.p.z, shade, surface.translucent);
-    let ambient = field_ambient_at(surface, z, ao, open, cube_means);
+    let sun = shade * visibility.x;
+    let ambient = field_ambient_at(surface, z, visibility.z, open, cube_means);
     let haze = haze_terms(look, point, -pbr.V);
     return PreShading(vec4(sun, wetness, haze.transmission, open), vec4(haze.scattering, 0.0),
         vec4(ambient, 0.0), pixel.normal_guide, z);
 }
 
+fn field_half_size() -> vec2<f32> {
+    return vec2<f32>(max(textureDimensions(normals) / 2u, vec2(1u)));
+}
+
+@fragment
+fn expand(in: FieldVertexOutput) -> @location(0) vec4<f32> {
+    let half_size = field_half_size();
+    return field_visibility(field_pixel(in.position.xy / half_size), main_light_source(), half_size);
+}
+
 @fragment
 fn preshade(in: FieldVertexOutput) -> PreShading {
-    let half_size = vec2<f32>(max(textureDimensions(normals) / 2u, vec2(1u)));
-    let uv = in.position.xy / half_size;
-    return shade_field(field_pixel(uv), main_light_source(), half_size);
+    let xy = in.position.xy;
+    return shade_field(field_pixel(xy / field_half_size()), textureLoad(half_expand, vec2<i32>(xy), 0));
 }
 
 fn reconstruction_weights(pixel: FieldPixel, center: vec2<f32>, taps: array<vec2<i32>, 4>) -> vec4<f32> {
@@ -180,7 +197,7 @@ fn compose(in: FieldVertexOutput) -> @location(0) vec4<f32> {
             diffuse += weights[i] * textureLoad(half_diffuse, at, 0).rgb;
         }
     } else {
-        let full = shade_field(pixel, light, vec2(0.0));
+        let full = shade_field(pixel, field_visibility(pixel, light, vec2(0.0)));
         shadow = full.shadow;
         fog = full.fog.rgb;
         diffuse = full.diffuse.rgb;
