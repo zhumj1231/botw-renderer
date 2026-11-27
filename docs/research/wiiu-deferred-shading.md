@@ -108,6 +108,29 @@ case at 23:00 and the forced snow case at 10:00. The latter showed the
 weather's diffuse lighting and haze changes. Snow particles and cold-region
 surface coverage still need a dedicated fixture.
 
+### Original Wii U capture checklist
+
+Start with one replayable Cemu Vulkan capture from Hateno in clear
+daylight. Choose a view with visible sky, a nearby object casting a shadow
+onto terrain, and a distant slope. Record the save or location, in-game
+time and weather. Keep the same view, resolution and graphics settings
+for the Hateno follow-up captures. Match the daylight time for weather
+comparisons when possible.
+
+| Topic | Capture | Question the capture can answer |
+| --- | --- | --- |
+| Indirect light | Hateno clear, cloudy, and clear at night | Read the red input to the first LightAnalyzer reduction, the dimensions of its input and first output, and the final exposure and analyzer texels. This establishes the actual reduction footprint and values for these views. |
+| Atmosphere and day/night | The same Hateno clear day and clear night views | Read the pre-shading fog and transmission at near and distant terrain, the main light direction and color, and the sky color before tone mapping. This gives per-view daylight and night reference values for the independent renderer. |
+| Weather | Hateno rain and clear daylight, with exposed terrain or stone visible in both | Read `rain_ratio`, the wetness value in the green channel of PreShading(Shadow), and the opaque HDR result at the same surfaces. In a separate cold-region frame with falling snow, identify the precipitation draws and record how the ground is shaded in that view. |
+| SSAO | Hateno clear | Read the depth and noise inputs at field PS 128, then inspect Expand blue and the terrain diffuse output at a ground contact and nearby open ground. This gives the AO pattern and diffuse values in those regions. |
+| Real-time shadows | Hateno clear | Read the drawn cascade count and depth map dimensions, the first two splits in `gsys_context[58].xy` and the current range from `gsys_environment[53].z + 20`. Cross-check against `[53].w + 40`. Inspect the far shadow binding, blend inputs and Expand red on the distant slope. |
+
+The clear daylight capture covers the starting checks for all five
+topics. The other views provide specific weather and night outputs.
+Keep the captures local. The seasonal input, runtime cascade adjustment
+triggers and the origin of the far-shadow RGB weights remain source
+investigations.
+
 ## Experimental terrain lighting
 
 Capture both modes with the same Hateno preset, time, weather and

@@ -85,15 +85,35 @@ View space, like in the game: `P` - period, `z = −P.z`, `V = P/|P|` (from the 
 ### PS 128: Shadows and SSAO – Expand
 
 JP v208 RPX `0x034009f4–0x03400a80` sets `e53.z` to the current shadow
-range minus 20 m and `e53.w` to that range minus 40 m. The range is the
-field at `shadow_state + 0x50`, which can be updated per frame at
-`0x038a6230` and `0x038a6278`. The JP `Main` graphics configuration defines
-three cascades and `depth_shadow_near_0_0` through `depth_shadow_near_0_3`
-values of 2, 32, 64 and 200 m. These describe the static configuration. The
-farthest split can also be set from the current range. The archived Cemu
-capture [shows three 720 × 720 maps](wiiu-deferred-shading.md) and leaves
-the live range and effective split distances to be read from an original
-draw.
+range minus 20 m and `e53.w` to that range minus 40 m. The JP `Main`
+graphics configuration defines three cascades and
+`depth_shadow_near_0_0` through `depth_shadow_near_0_3` values of 2, 32,
+64 and 200 m.
+
+The update at `0x038a616c–0x038a62b0` also writes a set of view splits at
+runtime. Below, `state` is the shadow object in register `r29`, and the
+offsets are float fields within that object.
+
+```text
+first_split = state[0x28] + state[0x70]
+far_target = state[0x58]
+if (flags & 0x20) != 0 and byte[0x500] == byte[0x501]:
+    far_target = clamp(state[0x50c] - state[0x52c] * state[0x530],
+                       state[0x58] - state[0x54], state[0x58])
+    current_far = lerp(state[0x50], far_target, state[0x534])
+else:
+    current_far = far_target
+second_split = lerp(first_split, far_target, state[0x38])
+state[0x50] = current_far
+```
+
+The range guard is assembled at `0x038a5b18–0x038a5b6c`; `flags` is the
+16-bit field at `state + 0xa`. The routine stores the second split from
+the target range and uses the current range for the last split and the
+two environment fade starts. The higher-level source of the adjustment
+flag and the actual distances for Hateno still need verification. The
+archived Cemu capture
+[shows three 720 × 720 maps](wiiu-deferred-shading.md).
 
 ```text
 Expand.x = sat(lerp(W⁴, Sh, sat(sm2.z + 1 − sat(0.05(z − e53.w))))·depth_shadow_scale
@@ -113,7 +133,18 @@ splits. Groups 51–62 apply the four comparison offsets, groups 63–82 sample
 the previous cascade conditionally, and ALU groups 18 and 92 fade the
 dynamic visibility to 1 over the final 20 m. The normal offset in groups
 39–44 uses a reconstructed depth-neighborhood normal and the encoded surface
-normal. The far world shadow still comes from the separate baked term above.
+normal. Groups 101–110 read the baked world shadow from
+`gsys_dynamic_reflection` and weight its RGB by `e42.rgb` before applying
+the fourth power.
+
+The JP v208 RPX at `0x033ffd84–0x033ffdb8` gets the first texture of
+`DeferredMain/preshading_shadow_clear` and at `0x033ffe10–0x033ffe44`
+places it in user sampler slot 8, mapped to `gsys_dynamic_reflection`.
+In `Bootup_Graphics.pack`, `Model/SystemModel.sbfres` assigns the
+material's `shadow` sampler to `solar_irradiation`. The matching
+`SystemModel.Tex2.sbfres` contains that 2000 × 1600 BC1 texture (GX2
+format `0x31`) with two mip levels. The source of the live `e42.rgb`
+weights remains open.
 
 The independent field path uses the static Main split distances of 32,
 64 and 200 m and a 2 m near plane. The shader reads Bevy's projected
