@@ -56,6 +56,12 @@ Capture both modes with the same Hateno preset, time, weather and
     cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesky --resolution 1280x720 --screenshot captures/terrain-forward.png
     cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesky --resolution 1280x720 --terrain-deferred --screenshot captures/terrain-deferred.png
 
+For a paired Cemu capture, pass the measured position and orientation with
+`--camera` and the measured vertical FOV in degrees and clip distances in
+metres with `--projection fov,near,far`. The far distance sets Bevy's
+culling range. Its perspective depth buffer uses reversed infinite depth,
+so compare reconstructed view-space distances across the two renderers.
+
 After the geometry pass, the D16 half-resolution classification selects
 field pixels for pre-shading. It computes shadow (sun and cloud attenuation,
 wetness, fog transmission and sky visibility), fog inscattering and diffuse

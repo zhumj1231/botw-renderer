@@ -73,6 +73,7 @@ usage: render [options]
                    baked region)
   --camera x,y,z,yaw,pitch  start camera (degrees; yaw 0 looks north / -Z);
                    overrides --place's view
+  --projection fov,near,far  set vertical FOV (degrees) and clip planes (metres)
   --time <HH:MM>   time of day to start at (default 10:00); screenshots
                    hold it still
   --weather <name> keep one weather everywhere: bluesky, cloudy, rain,
@@ -111,6 +112,7 @@ struct Args {
     place: Option<String>,
     /// Start camera: x, y, z, yaw, pitch (degrees).
     camera: Option<[f32; 5]>,
+    projection: PerspectiveProjection,
     /// Time of day to start at, in hours.
     time: Option<f32>,
     /// Weather to keep everywhere (index into `env::WEATHERS`).
@@ -134,6 +136,11 @@ fn parse_args() -> Result<Option<Args>, String> {
         assets: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
         place: None,
         camera: None,
+        projection: PerspectiveProjection {
+            near: 0.3,
+            far: 30_000.0,
+            ..default()
+        },
         time: None,
         weather: None,
         resolution: None,
@@ -166,6 +173,7 @@ fn parse_args() -> Result<Option<Args>, String> {
                         .map_err(|_| "--camera needs x,y,z,yaw,pitch".to_string())?,
                 );
             }
+            "--projection" => args.projection = parse_projection(&value()?)?,
             "--time" => args.time = Some(parse_time(&value()?)?),
             "--weather" => {
                 let name = value()?;
@@ -201,6 +209,29 @@ fn parse_args() -> Result<Option<Args>, String> {
         .canonicalize()
         .map_err(|e| format!("{}: {e} (run `cargo bake` first)", args.assets.display()))?;
     Ok(Some(args))
+}
+
+fn parse_projection(text: &str) -> Result<PerspectiveProjection, String> {
+    let invalid = || {
+        format!("--projection needs fov,near,far with 0 < fov < 180 and 0 < near < far, got {text}")
+    };
+    let values: Vec<f32> = text
+        .split(',')
+        .map(parse_number)
+        .collect::<Result<_, _>>()
+        .map_err(|_| invalid())?;
+    let [fov, near, far] = values.as_slice() else {
+        return Err(invalid());
+    };
+    if !(*fov > 0.0 && *fov < 180.0 && *near > 0.0 && *near < *far && far.is_finite()) {
+        return Err(invalid());
+    }
+    Ok(PerspectiveProjection {
+        fov: fov.to_radians(),
+        near: *near,
+        far: *far,
+        ..default()
+    })
 }
 
 fn parse_resolution(text: &str) -> Result<(u32, u32), String> {
@@ -435,7 +466,14 @@ fn main() -> AppExit {
         .add_systems(
             Startup,
             move |commands: Commands, media: ResMut<Assets<ScatteringMedium>>| {
-                setup_scene(commands, media, start, args.occlusion_culling, args.terrain_gbuffer)
+                setup_scene(
+                    commands,
+                    media,
+                    start,
+                    args.projection.clone(),
+                    args.occlusion_culling,
+                    args.terrain_gbuffer,
+                )
             },
         );
     if let Some(mode) = args.terrain_gbuffer {
@@ -482,6 +520,7 @@ fn setup_scene(
     mut commands: Commands,
     mut media: ResMut<Assets<ScatteringMedium>>,
     (transform, fly): (Transform, FlyCamera),
+    projection: PerspectiveProjection,
     occlusion_culling: bool,
     terrain_gbuffer: Option<terrain_gbuffer::TerrainGBuffer>,
 ) {
@@ -499,13 +538,7 @@ fn setup_scene(
     let mut camera = commands.spawn((
         Camera3d::default(),
         MainView,
-        // SI-RUN-02: camera near, far and FOV are not recovered.
-        // SI-CAM-02: Bevy default FOV and near plane.
-        Projection::Perspective(PerspectiveProjection {
-            near: 0.3,
-            far: 30_000.0,
-            ..default()
-        }),
+        Projection::Perspective(projection),
         transform,
         fly,
         Msaa::Off,
