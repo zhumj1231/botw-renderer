@@ -487,6 +487,86 @@ fn field_ambient_at(s: FieldSurface, z: f32, ao: f32, vis: f32, means: texture_2
     return mix(near, hemi, saturate(0.01 * z - 0.5));
 }
 
+struct FieldFootprint {
+    taps: array<vec2<i32>, 4>,
+    weights: vec4<f32>,
+}
+
+fn field_footprint(frame: Frame, normal_guide: f32, guides: texture_2d<f32>) -> FieldFootprint {
+    let size = vec2<i32>(textureDimensions(guides));
+    let center = frame.uv * vec2<f32>(size) - 0.5;
+    let base = vec2<i32>(floor(center));
+    let taps = array(
+        clamp(base, vec2(0), size - 1),
+        clamp(base + vec2(1, 0), vec2(0), size - 1),
+        clamp(base + vec2(0, 1), vec2(0), size - 1),
+        clamp(base + vec2(1, 1), vec2(0), size - 1),
+    );
+    let z = -frame.p.z;
+    var depth: vec4<f32>;
+    var normal: vec4<f32>;
+    for (var i = 0u; i < 4u; i += 1u) {
+        let guide = textureLoad(guides, taps[i], 0).rg;
+        depth[i] = guide.x;
+        normal[i] = guide.y;
+    }
+    let valid = depth > vec4(0.0);
+    let normal_cost = 4.0 * abs(normal - normal_guide);
+    let depth_error = abs(depth - z);
+    if all(valid) {
+        // PS 32 compares opposite corners before the bilinear reads.
+        let depth_scale = 2.0 * abs(view.clip_from_view[1][1]) / max(z, 1e-6);
+        let cost = fma(depth_error, vec4(depth_scale), normal_cost);
+        let tl_br = cost.x - cost.w;
+        let bl_tr = cost.z - cost.y;
+        let f = clamp(fract(center) + vec2(tl_br + bl_tr, tl_br - bl_tr), vec2(0.0), vec2(1.0));
+        return FieldFootprint(taps, vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y));
+    }
+
+    // Keep the closest match when other material classes left holes.
+    let cost = depth_error * (2.0 / max(z, 0.3)) + normal_cost;
+    var weights = vec4(0.0);
+    var score = 1e10;
+    var distance_squared = 1e10;
+    for (var i = 0u; i < 4u; i += 1u) {
+        if !valid[i] {
+            continue;
+        }
+        let offset = vec2<f32>(taps[i]) - center;
+        let candidate = dot(offset, offset);
+        if cost[i] < score || (cost[i] == score && candidate < distance_squared) {
+            score = cost[i];
+            distance_squared = candidate;
+            weights = vec4(0.0);
+            weights[i] = 1.0;
+        }
+    }
+    return FieldFootprint(taps, weights);
+}
+
+fn field_ambient_from_prepass(
+    frame: Frame,
+    normal: vec3<f32>,
+    diffuse: texture_2d<f32>,
+    guides: texture_2d<f32>,
+) -> vec4<f32> {
+#ifdef DEPTH_PREPASS
+    let size = max(textureDimensions(view_bindings::depth_prepass_texture) / 2u, vec2(1u));
+    if any(textureDimensions(guides) != size) || any(textureDimensions(diffuse) != size) {
+        return vec4(0.0);
+    }
+    let view_normal = direction_world_to_view(normal) * 0.5 + 0.5;
+    let footprint = field_footprint(frame, dot(view_normal, vec3(1.0 / 3.0)), guides);
+    var ambient = vec3(0.0);
+    for (var i = 0u; i < 4u; i += 1u) {
+        ambient += footprint.weights[i] * textureLoad(diffuse, footprint.taps[i], 0).rgb;
+    }
+    return vec4(ambient, dot(footprint.weights, vec4(1.0)));
+#else
+    return vec4(0.0);
+#endif
+}
+
 fn field_compose(pbr: PbrInput, s: FieldSurface, frame: Frame, light: MainLight, S: f32, ambient: vec3<f32>, vis: f32, overcast: f32) -> vec3<f32> {
     let V = -pbr.V;
     let N = s.N;
@@ -539,6 +619,10 @@ fn field_compose(pbr: PbrInput, s: FieldSurface, frame: Frame, light: MainLight,
 }
 
 fn field_color(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao: f32, cover: f32, means: texture_2d<f32>, rain: vec2<f32>, overcast: f32) -> vec3<f32> {
+    return field_color_with_ambient(pbr, s_in, frame, shadow, ao, cover, means, rain, overcast, vec4(0.0));
+}
+
+fn field_color_with_ambient(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao: f32, cover: f32, means: texture_2d<f32>, rain: vec2<f32>, overcast: f32, shared_ambient: vec4<f32>) -> vec3<f32> {
     let light = main_light_source();
     var S: f32;
     if s_in.leaf > 0.5 {
@@ -547,7 +631,10 @@ fn field_color(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao:
         S = shadow * field_surface_shadow(light, pbr, frame.p.z);
     }
     let vis = sky_visibility(cover, pbr.world_position.y, s_in.N.y, s_in.flag, -frame.p.z);
-    let ambient = field_ambient_at(s_in, -frame.p.z, ao, vis, means);
+    var ambient = shared_ambient.rgb;
+    if shared_ambient.w == 0.0 {
+        ambient = field_ambient_at(s_in, -frame.p.z, ao, vis, means);
+    }
     let s = wet_field(s_in, -pbr.V, rain);
     return field_compose(pbr, s, frame, light, S, ambient, vis, overcast);
 }

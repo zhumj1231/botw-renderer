@@ -2,6 +2,7 @@
 mod ambient;
 mod geometry;
 mod lighting;
+pub(crate) use lighting::FieldPreshading;
 use bevy::asset::{load_internal_asset, uuid_handle};
 use bevy::core_pipeline::FullscreenShader;
 use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d};
@@ -18,6 +19,7 @@ use bevy::render::{ExtractSchedule, Render, RenderApp, RenderStartup, RenderSyst
 
 const SHADER: Handle<Shader> = uuid_handle!("11c705a1-1393-44f5-a5d1-b2992d663941");
 pub const FIELD_CLASS: u8 = 4;
+const FIELD_OBJECT_CLASS: u8 = 5;
 const LEAF_CLASS: u8 = 6;
 const CHARACTER_CLASS: u8 = 8;
 const CLASS_DEPTH: TextureFormat = TextureFormat::Depth16Unorm;

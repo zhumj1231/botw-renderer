@@ -28,8 +28,10 @@
 #ifdef NORMAL_PREPASS
 #import bevy_pbr::{
     pbr_functions::prepare_world_normal,
+    pbr_fragment::pbr_input_from_standard_material,
     pbr_types::STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT,
 }
+#import botw::normal_map::mapped_normal
 #endif
 #ifdef MOTION_VECTOR_PREPASS
 #import bevy_pbr::{mesh_view_bindings::view, prepass_bindings}
@@ -40,13 +42,16 @@
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, main_pass_post_lighting_processing},
-    pbr_types::PbrInput,
+    pbr_types::{PbrInput, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_MASK},
     mesh_view_bindings::{globals, view},
     view_transformations::{position_world_to_view, frag_coord_to_uv},
 }
 #import botw::clouds::cloud_shadow
 #import botw::look::{read_look_at, apply_haze, sky_cover, field_wetness_at}
-#import botw::deferred_light::{FieldSurface, Frame, field_color, field_ssao, game_frame, main_light, main_light_source}
+#import botw::deferred_light::{
+    FieldSurface, Frame, field_ambient_from_prepass, field_color_with_ambient, field_ssao,
+    game_frame, main_light, main_light_source,
+}
 #import botw::normal_map::mapped_normal
 #endif
 
@@ -82,6 +87,8 @@ struct ObjectIndices {
     gloss_map: u32,
     translucency_map: u32,
     cube_mean: u32,
+    field_diffuse: u32,
+    field_guides: u32,
 }
 @group(#{MATERIAL_BIND_GROUP}) @binding(109) var<storage> object_indices: array<ObjectIndices>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(110) var<storage> object_params: array<ObjectParams>;
@@ -96,6 +103,8 @@ struct ObjectIndices {
 @group(#{MATERIAL_BIND_GROUP}) @binding(107) var translucency_map: texture_2d<f32>;
 // The environment's mean brightness, once a frame (deferred_light.rs).
 @group(#{MATERIAL_BIND_GROUP}) @binding(108) var cube_means: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(111) var field_diffuse: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(112) var field_guides: texture_2d<f32>;
 #endif
 
 // Whether the model's pixel is dissolved into its billboard.
@@ -115,7 +124,7 @@ fn dissolved(in: VertexOutput) -> bool {
 
 #ifdef PREPASS_PIPELINE
 
-// Match the forward cutout before tagging foliage in the camera prepass.
+// Match the forward cutout and the field object's mapped normal.
 #ifdef PREPASS_FRAGMENT
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -134,8 +143,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let object = params;
 #endif
     let normal = prepare_world_normal(in.world_normal, (flags & STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u, is_front);
-    let tag = select(1.0, 1.0 / 3.0, object.leaf.x > 0.5);
-    out.normal = vec4(normalize(normal) * 0.5 + vec3(0.5), tag);
+    let pbr = pbr_input_from_standard_material(in, is_front);
+    let mapped = mapped_normal(in, is_front, pbr);
+    let leaf = object.leaf.x > 0.5;
+    let tag = select(0.0, 1.0 / 3.0, leaf);
+    out.normal = vec4(normalize(select(mapped, normal, leaf)) * 0.5 + vec3(0.5), tag);
 #endif
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     out.frag_depth = in.unclipped_depth;
@@ -272,6 +284,7 @@ fn fragment(
     let frame = game_frame(position_world_to_view(world), frag_coord_to_uv(in.position.xy));
     var surface: FieldSurface;
     var ao = 1.0;
+    var shared_ambient = vec4(0.0);
     if params.leaf.x > 0.5 {
         // Foliage (`field_leaf`): no metal, gloss or normal.w flag, so no
         // ambient occlusion or rim light.
@@ -286,10 +299,26 @@ fn fragment(
         // SI-LGT-19: gloss without a map and metal are ours.
         surface.metal = pbr_input.material.metallic;
         surface.flag = 1.0;
-        ao = field_ssao(frame, noise, main_light_source().index);
+#ifdef FIELD_SHARED_PRESHADING
+        let alpha_mode = pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS;
+        if alpha_mode <= STANDARD_MATERIAL_FLAGS_ALPHA_MODE_MASK {
+#ifdef BINDLESS
+            let diffuse = bindless_textures_2d[indices.field_diffuse];
+            let guides = bindless_textures_2d[indices.field_guides];
+#else
+            let diffuse = field_diffuse;
+            let guides = field_guides;
+#endif
+            shared_ambient = field_ambient_from_prepass(frame, surface.N, diffuse, guides);
+        }
+#endif
+        if shared_ambient.w == 0.0 {
+            ao = field_ssao(frame, noise, main_light_source().index);
+        }
     }
     let rain = vec2<f32>(field_wetness_at(look_t, look, world, cover, surface.N.y, surface.flag), look.weather[0].y);
-    var lit = field_color(pbr_input, surface, frame, 1.0 - shade, ao, cover, means, rain, look.weather[0].w);
+    var lit = field_color_with_ambient(pbr_input, surface, frame, 1.0 - shade, ao, cover, means,
+        rain, look.weather[0].w, shared_ambient);
     // Glowing parts: the game's G-buffer writes them into the scene colour,
     // which its main pass adds under the shaded colour times `src.a`, the
     // fog's transmittance squared (`field_hybrid` PS 32: bit 0 of the

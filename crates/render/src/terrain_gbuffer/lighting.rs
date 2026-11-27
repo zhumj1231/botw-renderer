@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 
 use bevy::asset::{load_internal_asset, uuid_handle};
+use bevy::camera::CameraUpdateSystems;
 use bevy::core_pipeline::core_3d::{Opaque3d, main_opaque_pass_3d};
 use bevy::core_pipeline::prepass::ViewPrepassTextures;
 use bevy::core_pipeline::schedule::{Core3d, Core3dSystems};
@@ -9,7 +10,7 @@ use bevy::ecs::system::{SystemParamItem, lifetimeless::SRes};
 use bevy::pbr::deferred::DeferredLightingLayout;
 use bevy::pbr::{DrawMaterial, MeshPipelineKey, MeshViewBindGroup, ViewKeyCache};
 use bevy::prelude::*;
-use bevy::render::extract_resource::ExtractResourcePlugin;
+use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_phase::{
     DrawFunctions, PhaseItem, RenderCommand, RenderCommandResult, RenderCommandState,
@@ -25,10 +26,11 @@ use bevy::render::{RenderApp, RenderStartup};
 use crate::clouds::{CloudParams, CloudShadows};
 use crate::deferred_light::{CubeMean, SsaoNoise};
 use crate::look::LookTexture;
+use crate::object_material::ObjectMaterial;
 
 use super::{
-    CHARACTER_CLASS, CLASS_DEPTH, FIELD_CLASS, LEAF_CLASS, Stages, Targets, class_group, classify,
-    color, target,
+    CHARACTER_CLASS, CLASS_DEPTH, FIELD_CLASS, FIELD_OBJECT_CLASS, LEAF_CLASS, Stages, Targets,
+    TerrainGBuffer, class_group, classify, color, target,
 };
 use super::ambient::{LightAnalysis, LightAnalyzerPipelines, LightAnalyzerPlugin, allocate_reduction};
 use super::geometry::{TerrainMeshes, draw_geometry};
@@ -37,8 +39,7 @@ const SHADER: Handle<Shader> = uuid_handle!("e9b6a2f4-b244-46a5-bf90-36303dcd704
 const EXPAND: TextureFormat = TextureFormat::Rgba8Unorm;
 const SHADOW: TextureFormat = TextureFormat::Rgba8Unorm;
 const INDIRECT: TextureFormat = TextureFormat::Rg11b10Ufloat;
-const NORMAL_GUIDE: TextureFormat = TextureFormat::R8Unorm;
-const DEPTH_GUIDE: TextureFormat = TextureFormat::R32Float;
+const FIELD_GUIDES: TextureFormat = TextureFormat::Rg32Float;
 
 pub(super) struct TerrainLightingPlugin;
 
@@ -49,7 +50,12 @@ impl Plugin for TerrainLightingPlugin {
         app.add_plugins((
             ExtractResourcePlugin::<CloudShadows>::default(),
             ExtractResourcePlugin::<SsaoNoise>::default(),
+            ExtractResourcePlugin::<FieldPreshading>::default(),
         ));
+        app.init_resource::<FieldPreshading>().add_systems(
+            PostUpdate,
+            resize_preshading.after(CameraUpdateSystems),
+        );
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -64,6 +70,40 @@ impl Plugin for TerrainLightingPlugin {
                 )
                     .in_set(Core3dSystems::MainPass),
             );
+    }
+}
+
+/// The main view's indirect light and its depth/normal guides, also
+/// sampled by the forward field materials.
+#[derive(Resource, Default, Clone, ExtractResource)]
+pub(crate) struct FieldPreshading {
+    pub diffuse: Option<Handle<Image>>,
+    pub guides: Option<Handle<Image>>,
+    size: UVec2,
+}
+
+fn resize_preshading(
+    views: Query<(&Camera, &TerrainGBuffer)>,
+    mut shared: ResMut<FieldPreshading>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<ObjectMaterial>>,
+) {
+    let Ok((camera, TerrainGBuffer::Lighting)) = views.single() else {
+        return;
+    };
+    let Some(frame) = camera.physical_target_size() else {
+        return;
+    };
+    let size = (frame / 2).max(UVec2::ONE);
+    if shared.size == size {
+        return;
+    }
+    shared.size = size;
+    shared.diffuse = Some(images.add(Image::new_target_texture(size.x, size.y, INDIRECT, None)));
+    shared.guides = Some(images.add(Image::new_target_texture(size.x, size.y, FIELD_GUIDES, None)));
+    for (_, material) in materials.iter_mut() {
+        material.extension.field_diffuse = shared.diffuse.clone();
+        material.extension.field_guides = shared.guides.clone();
     }
 }
 
@@ -117,9 +157,6 @@ pub(super) struct LightingTargets {
     reduction: Vec<CachedTexture>,
     shadow: CachedTexture,
     fog: CachedTexture,
-    diffuse: CachedTexture,
-    normal: CachedTexture,
-    depth: CachedTexture,
 }
 
 pub(super) fn allocate_targets(
@@ -131,9 +168,6 @@ pub(super) fn allocate_targets(
         reduction: allocate_reduction(size, &mut get),
         shadow: get("field_half_shadow", SHADOW, size),
         fog: get("field_half_fog", INDIRECT, size),
-        diffuse: get("field_half_diffuse", INDIRECT, size),
-        normal: get("field_half_normal_guide", NORMAL_GUIDE, size),
-        depth: get("field_half_depth_guide", DEPTH_GUIDE, size),
     }
 }
 
@@ -168,7 +202,6 @@ fn init_layouts(mut commands: Commands) {
                 (9, float()),
                 (10, float()),
                 (11, float()),
-                (12, float()),
             ),
         )
         .iter()
@@ -176,7 +209,7 @@ fn init_layouts(mut commands: Commands) {
     );
     let mut pre = base.to_vec();
     pre.extend(
-        BindGroupLayoutEntries::with_indices(ShaderStages::FRAGMENT, ((13, float()),))
+        BindGroupLayoutEntries::with_indices(ShaderStages::FRAGMENT, ((13, float()), (14, float())))
             .iter()
             .cloned(),
     );
@@ -247,8 +280,7 @@ fn queue_pipelines(
                 target(INDIRECT),
                 target(INDIRECT),
                 None,
-                target(NORMAL_GUIDE),
-                target(DEPTH_GUIDE),
+                target(FIELD_GUIDES),
             ],
         ),
         queue(
@@ -277,6 +309,8 @@ pub(super) struct LightingPasses {
     analysis: LightAnalysis,
     pre_inputs: BindGroup,
     compose_inputs: BindGroup,
+    diffuse: TextureView,
+    guides: TextureView,
 }
 
 fn prepare_lighting(
@@ -290,6 +324,7 @@ fn prepare_lighting(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     images: Res<RenderAssets<GpuImage>>,
+    shared: Res<FieldPreshading>,
     scene: (
         Option<Res<LookTexture>>,
         Option<Res<SsaoNoise>>,
@@ -308,6 +343,15 @@ fn prepare_lighting(
     let Some(scene_normals) = prepass.normal_view() else {
         return;
     };
+    let (Some(diffuse), Some(guides)) = (
+        shared.diffuse.as_ref().and_then(|handle| images.get(handle)),
+        shared.guides.as_ref().and_then(|handle| images.get(handle)),
+    ) else {
+        return;
+    };
+    if diffuse.texture.size() != out.half.texture.size() || guides.texture.size() != diffuse.texture.size() {
+        return;
+    }
     let (Some(look), Some(noise), Some(cube), Some(clouds)) = scene else {
         return;
     };
@@ -364,7 +408,7 @@ fn prepare_lighting(
     );
     let mut pre_inputs = base.to_vec();
     pre_inputs.extend(
-        BindGroupEntries::with_indices(((13, &out_lit.expand.default_view),))
+        BindGroupEntries::with_indices(((13, &out_lit.expand.default_view), (14, scene_normals)))
             .iter()
             .cloned(),
     );
@@ -378,9 +422,8 @@ fn prepare_lighting(
         BindGroupEntries::with_indices((
             (8, &out_lit.shadow.default_view),
             (9, &out_lit.fog.default_view),
-            (10, &out_lit.diffuse.default_view),
-            (11, &out_lit.normal.default_view),
-            (12, &out_lit.depth.default_view),
+            (10, &diffuse.texture_view),
+            (11, &guides.texture_view),
         ))
         .iter()
         .cloned(),
@@ -409,6 +452,8 @@ fn prepare_lighting(
         analysis,
         pre_inputs,
         compose_inputs,
+        diffuse: diffuse.texture_view.clone(),
+        guides: guides.texture_view.clone(),
     });
 }
 
@@ -416,9 +461,21 @@ fn draw_lighting(
     view: ViewQuery<(&ViewTarget, &MeshViewBindGroup, &Targets)>,
     mut render: RenderContext,
     mut logged: Local<bool>,
+    shared: Res<FieldPreshading>,
+    images: Res<RenderAssets<GpuImage>>,
 ) {
     let (view_target, bindings, out) = view.into_inner();
     let (Some(out_lit), Some(passes)) = (&out.lighting, &out.lighting_passes) else {
+        // Forward materials must never reconstruct from a previous frame.
+        if out.lighting.is_some()
+            && let Some(guides) = shared.guides.as_ref().and_then(|handle| images.get(handle))
+        {
+            render.begin_tracked_render_pass(RenderPassDescriptor {
+                label: Some("clear field pre-shading guides"),
+                color_attachments: &[color(&guides.texture_view)],
+                ..default()
+            });
+        }
         return;
     };
     let LightingPasses {
@@ -433,6 +490,8 @@ fn draw_lighting(
         analysis,
         pre_inputs,
         compose_inputs,
+        diffuse,
+        guides,
     } = passes;
     classify(&mut render, "field scene class half", half, scene_classes, &out.half);
     draw(
@@ -442,7 +501,7 @@ fn draw_lighting(
         bindings,
         expand_inputs,
         &out.half,
-        &[0, FIELD_CLASS, LEAF_CLASS, CHARACTER_CLASS],
+        &[0, FIELD_CLASS, FIELD_OBJECT_CLASS, LEAF_CLASS, CHARACTER_CLASS],
         &[color(&out_lit.expand.default_view)],
     );
     analysis.draw(&mut render, &out_lit.reduction);
@@ -453,14 +512,13 @@ fn draw_lighting(
         bindings,
         pre_inputs,
         &out.half,
-        &[FIELD_CLASS],
+        &[FIELD_CLASS, FIELD_OBJECT_CLASS],
         &[
             color(&out_lit.shadow.default_view),
             color(&out_lit.fog.default_view),
-            color(&out_lit.diffuse.default_view),
+            color(diffuse),
             None,
-            color(&out_lit.normal.default_view),
-            color(&out_lit.depth.default_view),
+            color(guides),
         ],
     );
     classify(&mut render, "terrain class full", full, classes, &out.full);

@@ -40,6 +40,7 @@ use crate::clouds::{CloudParams, CloudShadows};
 use crate::deferred_light::{CubeMean, SsaoNoise};
 use crate::look::LookTexture;
 use crate::models::MaterialLook;
+use crate::terrain_gbuffer::FieldPreshading;
 
 const SHADER: Handle<Shader> = uuid_handle!("b7d2e4a1-5c93-4f08-a6e1-3d8f02c9b574");
 /// `botw::hand_off`: the dissolve test, shared with the billboards.
@@ -99,6 +100,10 @@ pub struct ObjectShading {
     /// which the bindless texture array needs.
     #[texture(108, sample_type = "float", filterable = false)]
     pub cube_mean: Handle<Image>,
+    #[texture(111, sample_type = "float", filterable = false)]
+    pub field_diffuse: Option<Handle<Image>>,
+    #[texture(112, sample_type = "float", filterable = false)]
+    pub field_guides: Option<Handle<Image>>,
     /// See [`ObjectParams::leaf`].
     pub leaf: Vec4,
     /// See [`ObjectParams::crown`].
@@ -158,7 +163,7 @@ impl MaterialExtension for ObjectShading {
     }
 
     /// Keep the billboard handoff mask in depth and shadow passes. The
-    /// experimental normal prepass also tags visible foliage for Expand.
+    /// experimental normal prepass tags visible field objects and foliage.
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
@@ -185,6 +190,12 @@ impl MaterialExtension for ObjectShading {
                 ..default()
             });
         }
+        if !prepass
+            && key.mesh_key.contains(MeshPipelineKey::NORMAL_PREPASS)
+            && let Some(fragment) = &mut descriptor.fragment
+        {
+            fragment.shader_defs.push("FIELD_SHARED_PRESHADING".into());
+        }
         Ok(())
     }
 }
@@ -196,6 +207,7 @@ impl ObjectShading {
         look: Option<&LookTexture>,
         ssao_noise: Option<&SsaoNoise>,
         cube_mean: Option<&CubeMean>,
+        field: Option<&FieldPreshading>,
     ) -> Self {
         Self {
             clouds: clouds.map_or_else(CloudParams::without_shadows, |c| c.params.clone()),
@@ -206,6 +218,8 @@ impl ObjectShading {
             gloss_map: Handle::default(),
             translucency_map: Handle::default(),
             cube_mean: cube_mean.map(|m| m.0.clone()).unwrap_or_default(),
+            field_diffuse: field.and_then(|f| f.diffuse.clone()),
+            field_guides: field.and_then(|f| f.guides.clone()),
             leaf: Vec4::ZERO,
             crown: Vec4::ZERO,
             gloss: Vec4::new(0.0, GLOSS_WITHOUT_MAP, 0.0, 0.0),

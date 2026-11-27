@@ -3,12 +3,12 @@
     mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT,
     pbr_functions::main_pass_post_lighting_processing,
     pbr_types::{PbrInput, pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
-    view_transformations::{direction_view_to_world, position_ndc_to_view, position_ndc_to_world},
+    view_transformations::{direction_view_to_world, direction_world_to_view, position_ndc_to_view, position_ndc_to_world},
 }
 #import botw::clouds::{CloudParams, cloud_shadow}
 #import botw::look::{read_look_at, sky_cover, field_wetness_at, haze_terms}
 #import botw::deferred_light::{
-    FieldSurface, Frame, MainLight, field_ssao, game_frame, scene_depth,
+    FieldSurface, Frame, MainLight, field_footprint, field_ssao, game_frame, scene_depth,
     main_light_source, field_surface_shadow, wet_field, sky_visibility, field_ambient_at, field_compose,
 }
 
@@ -23,8 +23,7 @@
 @group(2) @binding(8) var half_shadow: texture_2d<f32>;
 @group(2) @binding(9) var half_fog: texture_2d<f32>;
 @group(2) @binding(10) var half_diffuse: texture_2d<f32>;
-@group(2) @binding(11) var half_normal_guide: texture_2d<f32>;
-@group(2) @binding(12) var half_depth_guide: texture_2d<f32>;
+@group(2) @binding(11) var half_guides: texture_2d<f32>;
 @group(2) @binding(13) var half_expand: texture_2d<f32>;
 @group(2) @binding(14) var scene_normals: texture_2d<f32>;
 
@@ -62,12 +61,28 @@ fn field_pixel(uv: vec2<f32>) -> FieldPixel {
     return FieldPixel(pbr, game_frame(position_ndc_to_view(ndc), uv), surface, guide);
 }
 
+fn object_pixel(uv: vec2<f32>) -> FieldPixel {
+    let size = vec2<i32>(textureDimensions(scene_normals));
+    let texel = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2(0), size - vec2(1));
+    let normal = normalize(textureLoad(scene_normals, texel, 0).rgb * 2.0 - 1.0);
+    let ndc = vec3(uv.x * 2.0 - 1.0, 1.0 - 2.0 * uv.y, max(scene_depth(uv), 1e-6));
+    var pbr = pbr_input_new();
+    pbr.world_position = vec4(position_ndc_to_world(ndc), 1.0);
+    pbr.V = normalize(view.world_position - pbr.world_position.xyz);
+    pbr.world_normal = normal;
+    pbr.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT;
+    var surface: FieldSurface;
+    surface.N = normal;
+    surface.flag = 1.0;
+    let view_normal = direction_world_to_view(normal) * 0.5 + 0.5;
+    return FieldPixel(pbr, game_frame(position_ndc_to_view(ndc), uv), surface, dot(view_normal, vec3(1.0 / 3.0)));
+}
+
 struct PreShading {
     @location(0) shadow: vec4<f32>,
     @location(1) fog: vec4<f32>,
     @location(2) diffuse: vec4<f32>,
-    @location(4) normal_guide: f32,
-    @location(5) depth_guide: f32,
+    @location(4) guides: vec2<f32>,
 }
 
 struct FieldVertexOutput {
@@ -107,7 +122,7 @@ fn shade_field(pixel: FieldPixel, visibility: vec4<f32>) -> PreShading {
     let ambient = field_ambient_at(surface, z, visibility.z, open, cube_means);
     let haze = haze_terms(look, point, -pbr.V);
     return PreShading(vec4(sun, wetness, haze.transmission, open), vec4(haze.scattering, 0.0),
-        vec4(ambient, 0.0), pixel.normal_guide, z);
+        vec4(ambient, 0.0), vec2(z, round(clamp(pixel.normal_guide, 0.0, 1.0) * 255.0) / 255.0));
 }
 
 fn field_half_size() -> vec2<f32> {
@@ -125,6 +140,9 @@ fn expand(in: FieldVertexOutput) -> @location(0) vec4<f32> {
     let light = main_light_source();
     if in.code == 4u {
         return field_visibility(field_pixel(uv), light);
+    }
+    if in.code == 5u {
+        return field_visibility(object_pixel(uv), light);
     }
 
     let size = vec2<i32>(textureDimensions(scene_normals));
@@ -145,74 +163,26 @@ fn expand(in: FieldVertexOutput) -> @location(0) vec4<f32> {
 @fragment
 fn preshade(in: FieldVertexOutput) -> PreShading {
     let xy = in.position.xy;
-    return shade_field(field_pixel(xy / field_half_size()), textureLoad(half_expand, vec2<i32>(xy), 0));
-}
-
-fn reconstruction_weights(pixel: FieldPixel, center: vec2<f32>, taps: array<vec2<i32>, 4>) -> vec4<f32> {
-    let z = -pixel.frame.p.z;
-    var depth: vec4<f32>;
-    var normal: vec4<f32>;
-    for (var i = 0u; i < 4u; i += 1u) {
-        depth[i] = textureLoad(half_depth_guide, taps[i], 0).r;
-        normal[i] = textureLoad(half_normal_guide, taps[i], 0).r;
+    let uv = xy / field_half_size();
+    let visibility = textureLoad(half_expand, vec2<i32>(xy), 0);
+    if in.code == 5u {
+        return shade_field(object_pixel(uv), visibility);
     }
-    let valid = depth > vec4(0.0);
-    let normal_cost = 4.0 * abs(normal - pixel.normal_guide);
-    let depth_error = abs(depth - z);
-
-    if all(valid) {
-        // SI-GBUF-04: the Wii U shader compares opposite corners in the guide footprint.
-        let depth_scale = 2.0 * abs(view.clip_from_view[1][1]) / max(z, 1e-6);
-        let cost = fma(depth_error, vec4(depth_scale), normal_cost);
-        let top_left_minus_bottom_right = cost.x - cost.w;
-        let bottom_left_minus_top_right = cost.z - cost.y;
-        let shift = vec2(top_left_minus_bottom_right + bottom_left_minus_top_right,
-                         top_left_minus_bottom_right - bottom_left_minus_top_right);
-        let f = clamp(fract(center) + shift, vec2(0.0), vec2(1.0));
-        return vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
-    }
-
-    // Host pre-shading is sparse outside terrain. Keep the nearest matching valid tap there.
-    let cost = depth_error * (2.0 / max(z, 0.3)) + normal_cost;
-    var weights = vec4(0.0);
-    var score = 1e10;
-    var distance_squared = 1e10;
-    for (var i = 0u; i < 4u; i += 1u) {
-        if !valid[i] {
-            continue;
-        }
-        let offset = vec2<f32>(taps[i]) - center;
-        let candidate = dot(offset, offset);
-        if cost[i] < score || (cost[i] == score && candidate < distance_squared) {
-            score = cost[i];
-            distance_squared = candidate;
-            weights = vec4(0.0);
-            weights[i] = 1.0;
-        }
-    }
-    return weights;
+    return shade_field(field_pixel(uv), visibility);
 }
 
 @fragment
 fn compose(in: FieldVertexOutput) -> @location(0) vec4<f32> {
     let pixel = field_pixel(in.uv);
     let light = main_light_source();
-    let size = vec2<i32>(textureDimensions(half_depth_guide));
-    let center = pixel.frame.uv * vec2<f32>(size) - 0.5;
-    let base = vec2<i32>(floor(center));
-    let taps = array(
-        clamp(base, vec2(0), size - 1),
-        clamp(base + vec2(1, 0), vec2(0), size - 1),
-        clamp(base + vec2(0, 1), vec2(0), size - 1),
-        clamp(base + vec2(1, 1), vec2(0), size - 1),
-    );
-    let weights = reconstruction_weights(pixel, center, taps);
+    let footprint = field_footprint(pixel.frame, pixel.normal_guide, half_guides);
+    let weights = footprint.weights;
     var shadow = vec4(0.0);
     var fog = vec3(0.0);
     var diffuse = vec3(0.0);
     if any(weights > vec4(0.0)) {
         for (var i = 0u; i < 4u; i += 1u) {
-            let at = taps[i];
+            let at = footprint.taps[i];
             shadow += weights[i] * textureLoad(half_shadow, at, 0);
             fog += weights[i] * textureLoad(half_fog, at, 0).rgb;
             diffuse += weights[i] * textureLoad(half_diffuse, at, 0).rgb;

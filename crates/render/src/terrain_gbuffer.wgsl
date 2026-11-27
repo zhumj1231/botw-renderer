@@ -30,8 +30,9 @@ fn classify_scene_half(in: FullscreenVertexOutput) -> @builtin(frag_depth) f32 {
         return terrain;
     }
     let normal = textureLoad(scene_normals, coord(uv, textureDimensions(scene_normals)), 0);
-    // The two spare prepass codes carry native leaf and coarse character classes.
+    // Zero alpha with a normal marks a field object. The clear texel is all zero.
     switch u32(round(normal.a * 3.0)) {
+        case 0u: { return select(0.0, 5.0 / 255.0, any(normal.rgb != vec3(0.0))); }
         case 1u: { return 6.0 / 255.0; }
         case 2u: { return 8.0 / 255.0; }
         default: { return 0.0; }

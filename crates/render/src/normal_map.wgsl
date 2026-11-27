@@ -9,18 +9,22 @@
 //
 // Otherwise it repeats Bevy's normal mapping (`pbr_input_from_standard_
 // material`, Bevy 0.19): the same sample, mikktspace basis, flipped y and
-// back faces. Forward pass only, for materials extending `StandardMaterial`.
+// back faces, for materials extending `StandardMaterial`.
 
 #define_import_path botw::normal_map
 
 #import bevy_pbr::{
-    forward_io::VertexOutput,
     mesh_bindings::mesh,
     mesh_view_bindings::view,
     pbr_bindings,
     pbr_functions::calculate_tbn_mikktspace,
     pbr_types::{PbrInput, STANDARD_MATERIAL_FLAGS_TWO_COMPONENT_NORMAL_MAP, STANDARD_MATERIAL_FLAGS_FLIP_NORMAL_MAP_Y, STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT},
 }
+#ifdef PREPASS_PIPELINE
+#import bevy_pbr::prepass_io::VertexOutput
+#else
+#import bevy_pbr::forward_io::VertexOutput
+#endif
 #import bevy_render::bindless::{bindless_samplers_filtering, bindless_textures_2d}
 
 #ifdef BINDLESS

@@ -332,6 +332,7 @@ fn finish_loads(
     mask: Res<HandOffMask>,
     ssao_noise: Option<Res<SsaoNoise>>,
     cube_mean: Option<Res<CubeMean>>,
+    field: Option<Res<crate::terrain_gbuffer::FieldPreshading>>,
     clouds: Option<Res<CloudShadows>>,
     look: Option<Res<LookTexture>>,
     mut dynamic: ResMut<DynamicEmission>,
@@ -361,6 +362,7 @@ fn finish_loads(
                 look.as_deref(),
                 ssao_noise.as_deref(),
                 cube_mean.as_deref(),
+                field.as_deref(),
             )
         });
         let sky = std::mem::take(&mut folder.sky);

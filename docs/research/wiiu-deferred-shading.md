@@ -57,7 +57,7 @@ shader and RPX studies. The independent paths describe the current source.
 | Scene element | Wii U path | Independent renderer |
 | --- | --- | --- |
 | Terrain and trails | `uking_terrain` writes class 4 and its albedo, view normal and gloss. The field passes consume these through Expand, pre-shading and HDR composition. | `--terrain-deferred` writes terrain to RT0/1/3 and runs the class-4 lighting chain. The meshes still use skirts at LOD edges. [Terrain inputs](wiiu-field-shading.md#terrain-mesh-transitions-and-material-inputs) |
-| Static objects | Rock and trunk material variants with class 4 also use the opaque field passes. Their G-buffer flags control AO and the contour term. | `ObjectShading` evaluates field lighting per mesh fragment. These materials still need a writer for the shared terrain G-buffer. [Object material variants](wiiu-field-shading.md#the-result) |
+| Static objects | Rock and trunk material variants with class 4 also use the opaque field passes. Their G-buffer flags control AO and the contour term. | In deferred mode, `ObjectShading` writes mapped normals during the camera prepass. Terrain and opaque or cutout field objects share the half-resolution environment-light result. The objects compose that result in their material draw. [Object material variants](wiiu-field-shading.md#the-result) |
 | Grass and tree crowns | The recovered grass blade, cross and cover variants write class 4 with the AO/contour flag off. Crown and distant-tree variants write class 7 and use `field_leaf`. | Deformed blades, grass cards and tree materials shade through their forward paths. Grass draws over the composed terrain. [Grass and tree G-buffer](wiiu-field-shading.md#grass-and-distant-trees-g-buffer-uking_grass-uking_tree) |
 | Water | `TeraWater` writes class 22, albedo and normal, and stores transmitted scene color. The water pre-shading and class-6 composition consume the shared inputs. | The transmissive stage samples the composed scene and its depth. The water shader performs its own refraction and final lighting. [Water inputs and outputs](wiiu-water-variants.md) |
 | Sky and aerial perspective | The sky setup supplies environment colors, cube reflection, cloud shadow and fog inputs to the material passes. | Day/night palettes, sky and cloud systems supply the view cubemap, look texture and cloud shadow map. The host shares the field haze computation across materials. [Sky resources](wiiu-sky-resources.md) |
@@ -165,7 +165,7 @@ path while a row is open.
 | Topic | Capture | Question the capture can answer | Complete without a new capture? Evidence and blocker |
 | --- | --- | --- | --- |
 | Real-time shadows | Hateno clear daylight | Read the drawn cascade count and depth map dimensions, the first two splits in `gsys_context[58].xy` and the current range from `gsys_environment[53].z + 20`. Cross-check against `[53].w + 40`. Read `gsys_environment[42].rgb` and compare it to the clock-derived weights, then inspect Expand red on the distant slope. | **Complete for stock JP v208 Main terrain, as static research.** The traced main-view state leaves the history-based range guard off, while the scene preset and runtime offsets still determine the splits and fade starts. The field shader's cascade sampling and baked far-shadow blend are traced. The independent renderer still uses Bevy cascade maps and configured distances. [Field shadows](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
-| SSAO | Hateno clear, with a rock or trunk in contact with the ground and nearby open ground | Verify the live depth, noise and final lighting sampler bindings. Compare Expand blue and the reconstructed ambient light at the contact, across the silhouette and on open ground. | **Open.** The Main field kernel, late translucent ordering and default reconstruction sampler are traced. A controlled independent readback confirmed that the same ground pixels change when a wall enters the depth buffer. The renderer shares the depth grid and shadow cutoff, but still evaluates object receivers in their forward pass. Which special scene paths override the Main configuration remains open. [SSAO depth and material boundaries](#ssao-depth-and-material-boundaries) |
+| SSAO | Hateno clear, with a rock or trunk in contact with the ground and nearby open ground | Verify the live depth, noise and final lighting sampler bindings. Compare Expand blue and the reconstructed ambient light at the contact, across the silhouette and on open ground. | **Open.** The Main field kernel, late translucent ordering and default reconstruction sampler are traced. Independent ground and field objects now share half-resolution ambient light and both use depth/normal-guided reconstruction. Scene selection and overrides in shrines, interiors and cutscenes remain open. [SSAO depth and material boundaries](#ssao-depth-and-material-boundaries) |
 | Indirect light | Hateno clear, cloudy, and clear at night, with nearby foliage and the character visible | Read Expand red on terrain, foliage and the character. Check the first reduction's input and output sizes, and read the final exposure and analyzer texels. | **Open.** The crop, light and weather coefficients, and the native rules for background, foliage and character coverage are traced. Near foliage and character coverage now pass independent GPU readback. Far-tree billboards and the native per-material shadow sampling still need independent implementation. [LightAnalyzer](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
 | Atmosphere and day/night | The same Hateno clear day and clear night views | Read the pre-shading fog and transmission at near and distant terrain, the main light direction and color, and the sky color before tone mapping. This gives per-view daylight and night reference values for the independent renderer. | **Complete for the JP v208 main view with the shipped atmosphere table.** The stock table load, scattering kernels and per-view palette-driven bake are traced. The independent bake passed the reference check on the decoded table. Its final brightness conversion remains fitted pending per-view values. [Sky LUT passes](wiiu-sky-resources.md#wii-u-v208-shipped-table-and-the-precompute-passes) |
 | Weather and seasons | Hateno rain and clear daylight, with exposed terrain or stone visible in both. Hebra with falling snow. | Read `rain_ratio`, the wetness value in the green channel of PreShading(Shadow), and the opaque HDR result at the same Hateno surfaces. In the Hebra frame, identify the precipitation draws and read the ground's actual material, wetness and lighting. | **Complete for stock JP v208 MainField terrain and outdoor weather, as static research.** The tile data already contains the snow material mix. Snowfall uses a separate effect path, while the deferred rain inputs decay toward dry. The traced terrain, forecast and palette paths have no independent seasonal selector. The independent forecast still approximates the cold transition. [Snow-covered terrain](weather.md#12-snow-covered-mainfield-terrain-in-jp-v208) |
@@ -230,7 +230,7 @@ With `a = error(TL) - error(BR)` and `b = error(BL) - error(TR)`, the shader add
 `(a + b, a - b)` to the bilinear fraction and clamps each axis to `[0, 1]`.
 
 The host applies this shift and bilinearly reads shadow, fog and diffuse
-where all four terrain taps exist. At holes in terrain-only pre-shading,
+where all four field taps exist. At holes left by other material classes,
 the host keeps the nearest matching valid tap. If none is available, it
 recomputes visibility at the full-resolution receiver using the same
 half-depth grid.
@@ -283,9 +283,18 @@ selection and overrides are still open.
 
 **Independent verification.** The deferred terrain path and forward
 field receivers now share the point-sampled half-depth grid, noise
-phase and outer-cascade cutoff. The forward path evaluates the kernel
-at the receiving fragment. The half-resolution material attachments
-and reconstruction still cover terrain only.
+phase and outer-cascade cutoff. In `--terrain-deferred`, the camera
+prepass tags opaque and cutout object fragments after alpha and LOD
+tests. Half classification assigns them internal class 5 to distinguish
+the mapped normal in the camera prepass from the terrain G-buffer.
+Both represent the original half-resolution field class 4. Both enter
+Expand and write the same half-resolution diffuse and guide images.
+The guide's red channel is linear view depth and its green channel
+keeps the original 8-bit normal mean. A zero depth marks an empty tap.
+The terrain composition and object draws run the same reconstruction.
+Object direct lighting, reflection and haze use the object material.
+The forward AO evaluation also supplies the fallback while the shared
+pass is unavailable or the footprint has no valid taps.
 
 In the 640×360 synthetic wall fixture, the deferred Vulkan replay
 (`Expand` EID 894) had five terrain samples at 158.66 m with blue
@@ -297,6 +306,21 @@ sample's AO byte in both replays. In the wall replay, all 23,985 terrain
 samples at or beyond the configured 200 m cutoff were neutral.
 The forward wall draw (EID 860) bound the 640×360 scene depth and the same
 4×4 rotation texture. These captures used independent synthetic assets.
+
+A closer 640×360 capture at `-1.4,73,142,0,-12`, with projection
+`43,0.3,30000`, verified the shared pre-shading. Terrain composition
+(EID 1466) and the wall draw (EID 1487) both bound diffuse resource 395
+and guide resource 381, produced by the pre-shading ending at EID 1441.
+There were 23,945 terrain samples and 26,760 wall samples, with fully
+populated guides and finite diffuse values. Expand contained 114 terrain
+and six wall samples below neutral AO. There were 285 four-tap footprints
+containing both materials and no missing guides.
+
+At the Hateno reference camera, the independent 641×361 Vulkan frame
+used a 320×180 pre-shading target. It contained 2,132 opaque object
+samples and 3,863 foliage samples. Twenty-four opaque object samples
+had AO below neutral. The foliage samples left the shared field guides
+empty. The readback contained 450 complete terrain/object footprints.
 
 ### Half-resolution depth
 
