@@ -136,6 +136,14 @@ as the water glint. In the frozen Hateno comparison, the 10:00 clear
 image stayed pixel-identical and the 16:00 rain image lost its direct
 specular highlights. The sky reflection and wet normal still contribute.
 
+The rainy field pre-shading shader (PS 113) writes rain wetness into
+`Shadow.y`. It computes the other channels with the G-buffer normal;
+PS 33 changes gloss and tilts the normal during composition. The host
+follows this order in both terrain lighting paths. Paired 640×360
+Vulkan captures of a rainy terrain fixture show the same wetness, fog,
+depth and normal guide. The ambient target changes where pre-shading
+previously used the tilted normal.
+
 ### Capturing the same frame on Windows
 
 Launch the release renderer with RenderDoc's `capture` command. Use

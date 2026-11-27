@@ -86,8 +86,10 @@ fn shade_field(pixel: FieldPixel, light: MainLight, half_size: vec2<f32>) -> Pre
     let z = -pixel.frame.p.z;
     let look = read_look_at(look_texture, point);
     let cover = sky_cover(look_texture, look, point);
-    let wetness = field_wetness_at(look_texture, look, point, cover, pixel.surface.N.y, pixel.surface.flag);
-    let surface = wet_field(pixel.surface, -pbr.V, vec2(wetness, look.weather[0].y));
+    let surface = pixel.surface;
+    // The rainy pre-shading variant writes wetness to Shadow.y. Only
+    // composition changes the normal and gloss.
+    let wetness = field_wetness_at(look_texture, look, point, cover, surface.N.y, surface.flag);
     let open = sky_visibility(cover, point.y, surface.N.y, surface.flag, z);
     var ao = 1.0;
     if z < 150.0 {

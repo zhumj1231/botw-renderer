@@ -480,10 +480,10 @@ fn field_compose(pbr: PbrInput, s: FieldSurface, frame: Frame, light: MainLight,
 }
 
 fn field_color(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao: f32, cover: f32, means: texture_2d<f32>, rain: vec2<f32>, overcast: f32) -> vec3<f32> {
-    let s = wet_field(s_in, -pbr.V, rain);
     let light = main_light_source();
-    let S = field_shadow(light, pbr, frame.p.z, shadow, s.translucent);
-    let vis = sky_visibility(cover, pbr.world_position.y, s.N.y, s.flag, -frame.p.z);
-    let ambient = field_ambient_at(s, -frame.p.z, ao, vis, means);
+    let S = field_shadow(light, pbr, frame.p.z, shadow, s_in.translucent);
+    let vis = sky_visibility(cover, pbr.world_position.y, s_in.N.y, s_in.flag, -frame.p.z);
+    let ambient = field_ambient_at(s_in, -frame.p.z, ao, vis, means);
+    let s = wet_field(s_in, -pbr.V, rain);
     return field_compose(pbr, s, frame, light, S, ambient, vis, overcast);
 }
