@@ -133,14 +133,27 @@ before multiplying by `cMainLightColor.w` and cubing the result. The
 intermediate `TextureSampler` is initialized with clamp and linear
 filtering by `GX2InitSampler` at `0x03a82fcc`.
 
+JP v208 `0x038b4fe8–0x038b5154` reads the Expand width and height from
+the sampler at G-buffer `+0x2e4c`. For the 2D Expand texture the extracted
+dimensions are the width at sampler `+0xc4` (at least 1) and the height
+at `+0xc8` (at least 1). The height path also checks the value returned
+by `0x03a7e470`, which returns 1 for the 2D texture. The starting
+dimensions are `floor(W * width_scale * scale)` and
+`floor(H * scale)`, calculated in float32. Dimensions below 2 are
+replaced with 3 before the halving loop. The constructor at
+`0x038b38dc–0x038b3904` initializes the two scales to `0.8` and `0.25`
+from RPX constants `0x103314d0` and `0x103314d4`. With those defaults,
+640×360 Expand starts the loop at 128×90, and the first draw targets
+64×45 while sampling the original Expand. The first dimensions follow
+from the code and defaults. Any configuration override and the live
+target dimensions still need verification.
+
 The `preshading_shadow_clear` material selects class 0. Its JP v208
 PS 132–135 binaries are identical and export `(1, 1, 1, 1)` to Expand.
 The reduction shader has one red-channel sample per output pixel with no
 material test. Background pixels written by that pass therefore count as
 full visibility. Field, foliage and character shadow variants supply their
-own red values before the reduction. The native reduction also scales its
-starting dimensions before the repeated halving. The exact live source
-dimensions were not captured for this analysis.
+own red values before the reduction.
 
 ```text
 e     = (cExposure·main.w)³,  avg = luma(cCubeMap2D)
