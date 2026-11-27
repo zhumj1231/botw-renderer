@@ -84,15 +84,15 @@ in X. Its target size comes from the native 0.8 width and 0.25 overall
 scales followed by the first halving. Linear downsampling carries red
 visibility and alpha weight through those levels, then samples their
 center and divides.
-The result is weighted by the current clear-sky share, the host's
-counterpart to `cMainLightColor.w`. Views without Expand use that weather
-weight alone. Foliage and characters still need Expand coverage in the
+The result is weighted by the main-light switch and lightning ratio
+(`cMainLightColor.w`). Views without Expand use full visibility and the
+same ratio. Foliage and characters still need Expand coverage in the
 independent path.
 
-Before the centered reduction change, the independent 640×360 Hateno
-Vulkan replay used a half-sized input that
-contained 51,593 terrain samples and 6,007 depth-covered pixels outside
-that G-buffer. Those three replays used the same camera and projection.
+The archived independent 640×360 Hateno Vulkan replays still used full
+width and the former clear-sky weight. The half-sized input contained
+51,593 terrain samples and 6,007 depth-covered pixels outside that
+G-buffer. Those three replays used the same camera and projection.
 
 | Case | Reduced visibility before weather | Analyzer coefficient | Mean terrain diffuse luminance |
 | --- | ---: | ---: | ---: |
@@ -111,6 +111,14 @@ replay. Its 320×180 Expand source reduced to 32×23, 16×12, 8×6, 4×3,
 and 2×2. Read-back red and alpha samples were within 0.0027 of the
 bilinear reference at every level. Sampling the full width instead
 would differ by as much as 1.0 at the first level.
+
+Matched 640×360 flat-wall replays with the revised main-light input read
+an analyzer main-light ratio of 1 in settled clear daylight, overcast
+daylight and clear night. The resolved shares were 0.898, 0.898 and
+0.752, respectively. The overcast replay had a separate sky weight of
+1. These are independent-renderer measurements. They use full
+`cForceShadowRatio` while the native final reduction also applies its
+cloudiness-dependent shadow fade.
 
 Frozen day/night and weather cases can exercise this path with the existing
 baked region. The independent path completed the 1280×720 Hateno night
@@ -135,7 +143,7 @@ path while a row is open.
 | --- | --- | --- | --- |
 | Real-time shadows | Hateno clear | Read the drawn cascade count and depth map dimensions, the first two splits in `gsys_context[58].xy` and the current range from `gsys_environment[53].z + 20`. Cross-check against `[53].w + 40`. Read `gsys_environment[42].rgb` and compare it to the clock-derived weights, then inspect Expand red on the distant slope. | **Open.** The range calculation, history requirement, and far-shadow texture and clock weights are known. The code that enables the `0x20` range-adjustment flag still needs to be identified. [Field shadows](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
 | SSAO | Hateno clear | Verify the live depth and noise bindings at field PS 128 and read Expand blue and the terrain diffuse output at a ground contact and nearby open ground. | **Complete for Main terrain.** The native half-depth producer does one point sample across depth edges. The noise, four-tap kernel, diffuse input and cutoff at the current shadow range are traced. The independent terrain path follows the configured cascade range and passed an offscreen Vulkan readback. [AO formula](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
-| Indirect light | Hateno clear, cloudy, and clear at night | Read the red input to the first LightAnalyzer reduction, the dimensions of its input and first output, and the final exposure and analyzer texels. This establishes the actual reduction footprint and values for these views. | **Open.** The native centered sampling, initial scales and field, foliage and character class tests are traced. The independent path still needs foliage and character coverage and the native main-light coefficient. [LightAnalyzer](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
+| Indirect light | Hateno clear, cloudy, and clear at night | Read the red input to the first LightAnalyzer reduction, the dimensions of its input and first output, and the final exposure and analyzer texels. This establishes the actual reduction footprint and values for these views. | **Open.** The native crop, class tests, main-light coefficient and stock weather targets for `cForceShadowRatio` are traced. The independent path still needs the final shadow multiplier and Expand coverage for foliage and characters. [LightAnalyzer](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
 | Atmosphere and day/night | The same Hateno clear day and clear night views | Read the pre-shading fog and transmission at near and distant terrain, the main light direction and color, and the sky color before tone mapping. This gives per-view daylight and night reference values for the independent renderer. | **Open.** The palette blend, main-light direction and sky-dome LUT sampling are traced. The filter kernels that generate the Rayleigh and Mie inputs to the scattering LUT are still unverified. [Sky LUT passes](wiiu-sky-resources.md) |
 | Weather and seasons | Hateno rain and clear daylight, with exposed terrain or stone visible in both | Read `rain_ratio`, the wetness value in the green channel of PreShading(Shadow), and the opaque HDR result at the same surfaces. In a separate cold-region frame with falling snow, identify the precipitation draws and record how the ground is shaded in that view. | **Open.** The weather palette blend, cold-climate precipitation selection and wet-surface shader are traced. The cold-region surface path still needs to establish whether snowfall changes terrain materials, and the time and climate code still needs to establish whether there is a separate seasonal input. [Weather and precipitation](weather.md) |
 

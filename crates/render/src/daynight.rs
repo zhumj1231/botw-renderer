@@ -155,7 +155,13 @@ impl Plugin for DayNightPlugin {
                 )
                     .chain(),
             )
-            .add_systems(PostUpdate, update_sky.before(TransformSystems::Propagate));
+            .add_systems(
+                PostUpdate,
+                (
+                    update_sky.before(TransformSystems::Propagate),
+                    update_light_look.before(crate::look::LookSystems::Upload),
+                ),
+            );
     }
 }
 
@@ -966,6 +972,12 @@ pub fn update_sky_state(
         (light.towards, light.sky, (light.change - flash).max(0.0));
     (now.flash, now.flash_peak) = (flash, flash_peak);
     *sky = now;
+}
+
+fn update_light_look(sky: Res<Sky>, mut look: ResMut<crate::look::Look>) {
+    if look.main_light_change != sky.light_change {
+        look.main_light_change = sky.light_change;
+    }
 }
 
 /// The one main light, like the game's `dir_main`: the sun by day, the

@@ -273,6 +273,8 @@ pub struct Look {
     // Texels 0–3: light (track 1).
     /// Gain on lit surfaces after `apply_pbr_lighting` (texel 0.x; 1 = none).
     pub diffuse_gain: f32,
+    /// LightAnalyzer's main-light scale during a light switch or flash (texel 0.y).
+    pub main_light_change: f32,
     /// Texels 4–7: air and haze (track 2).
     pub haze: [Vec4; 4],
     /// Texels 8–11: where the map of the sky's cover lies (`sky_occlusion.rs`,
@@ -299,6 +301,7 @@ impl Default for Look {
     fn default() -> Self {
         Self {
             diffuse_gain: 1.0,
+            main_light_change: 1.0,
             haze: [Vec4::ZERO; 4],
             sky_occlusion: [Vec4::ZERO; 4],
             spare: [Vec4::ZERO; 4],
@@ -313,7 +316,7 @@ impl Look {
     /// The texels as the shader reads them (`Look` in `look.wgsl`).
     pub fn texels(&self) -> [Vec4; LOOK_TEXELS] {
         let mut texels = [Vec4::ZERO; LOOK_TEXELS];
-        texels[0] = Vec4::new(self.diffuse_gain, 0.0, 0.0, 0.0);
+        texels[0] = Vec4::new(self.diffuse_gain, self.main_light_change, 0.0, 0.0);
         texels[4..8].copy_from_slice(&self.haze);
         texels[8..12].copy_from_slice(&self.sky_occlusion);
         texels[12..16].copy_from_slice(&self.spare);
@@ -512,7 +515,7 @@ mod tests {
     #[test]
     fn default_look_is_the_identity_layout() {
         let texels = Look::default().texels();
-        assert_eq!(texels[0], Vec4::new(1.0, 0.0, 0.0, 0.0));
+        assert_eq!(texels[0], Vec4::new(1.0, 1.0, 0.0, 0.0));
         assert!(texels[1..].iter().all(|t| *t == Vec4::ZERO));
         let bytes = texel_bytes(&texels, &LookNoise::default());
         assert_eq!(
@@ -543,6 +546,7 @@ mod tests {
     fn sections_land_in_their_texels() {
         let look = Look {
             diffuse_gain: 2.0,
+            main_light_change: 0.5,
             haze: [Vec4::splat(4.0), Vec4::ZERO, Vec4::ZERO, Vec4::splat(7.0)],
             sky_occlusion: [Vec4::splat(8.0); 4],
             spare: [Vec4::ZERO, Vec4::ZERO, Vec4::ZERO, Vec4::splat(15.0)],
@@ -551,7 +555,7 @@ mod tests {
             weather: [Vec4::splat(24.0), Vec4::ZERO, Vec4::ZERO, Vec4::ZERO],
         };
         let texels = look.texels();
-        assert_eq!(texels[0].x, 2.0);
+        assert_eq!(texels[0], Vec4::new(2.0, 0.5, 0.0, 0.0));
         assert_eq!(
             (texels[4], texels[7], texels[8], texels[15]),
             (

@@ -24,6 +24,6 @@ fn resolve() -> @location(0) vec4<f32> {
     let sample = textureSampleLevel(visibility, linear_sampler, vec2(0.5), 0.0);
     // Alpha weights the pixels supplied by the terrain and background passes.
     let share = select(1.0, sample.r / max(sample.a, 1e-6), sample.a > 0.0);
-    let main_light = saturate(1.0 - read_look(look_texture).weather[0].w);
+    let main_light = saturate(read_look(look_texture).light[0].y);
     return vec4(0.0, saturate(share) * main_light, 0.0, 0.0);
 }

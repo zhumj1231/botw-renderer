@@ -179,6 +179,40 @@ classified separately at full resolution. The table gives the shader
 writes selected by those material states. The original frame still
 provides the scene-specific coverage and resource values.
 
+In the JP v208 KSys update, `0x034019bc–0x034019dc` writes
+`1 - (KSys+0xb58)` to the alpha component of the color passed to
+`0x038b48a4`. That function uploads the color as `cMainLightColor`.
+`0x03408770` stores the light-switch or flash fade at `KSys+0xb58`,
+and the outdoor update at `0x03657c94–0x03657cac` sends it
+`min(1, switch_fade + lightning_flash)`. PS 487 multiplies the reduced
+exposure by the resulting main-light ratio. The independent renderer
+feeds both its analyzer and its forward fallback from `Sky::light_change`.
+
+The final reduction's separate `cForceShadowRatio` lives at view
+`+0x6ec`. It is initialized to 1 and written by `0x038b5620`.
+`0x03408948` calls that setter with `1 - f2`, where the outdoor
+caller at `0x03658600` supplies
+`f2 = (SkyMgr+0x2174) * (1 - lightning_flash)`.
+`0x03658320–0x036585b4` selects a coefficient using the wanted weather
+from `0x03672890`, multiplies it by world cloudiness (`SkyMgr+0x2120`),
+and chases that target into `+0x2174`. The stock reset at
+`0x0364f5c0–0x0364f5ec` gives these coefficients.
+
+| Wanted weather | Target coefficient before cloudiness |
+| --- | ---: |
+| Clear, cloudy, sun shower | 0.4 |
+| Rain, snow, thunder rain | 0.8 |
+| Heavy rain, heavy snow | 1 |
+| Thunderstorm | 0 |
+
+For positive frame factor `dt`, the chase uses
+`1 - pow(0.99, dt)` with a minimum step of `0.0001 * dt`, a maximum of
+`0.001 * dt`, and a snap when the distance is within the minimum step.
+The update also assigns the target immediately when the world flag at
+`+0x53c` is set. A settled stock cloudy state with cloudiness 1 and no
+flash gives a final reduction multiplier of 0.6. The independent reducer
+still uses 1 for this multiplier.
+
 ```text
 e     = (cExposure·main.w)³,  avg = luma(cCubeMap2D)
 T[0]  = (x, sat(1.2x), Master),  x = cExposure·main.w
@@ -200,7 +234,11 @@ T[4,5]= c = cube(normalize(look.x, 1 − 2g, −look.z), LOD 3),
 | `field_ambient_sat` / `_min` | 0.5 / 0.8 | | `ambient_offset_cubemap` / `_far` | 0.01 / 1.0 |
 | `effect_ambient_sat` | 2.0 | | `light_prepass` / `_threshold` / `_offset` | 0.1 / 3 / 3 |
 
-`cAmbientMasterIntensity` (+0x6e8) and `cForceShadowRatio` (+0x6ec) - 1.0 when created; `cAmbientScaleChara` (+0x6d8) - global vec4 `0x1054a51c`, changes `0x038b55c4`. `cLook` - (+8, +8, +0x28) camera matrices (horizontal components of the look). `cMainLightColor.rgb` - color `dir_main` × intensity (`FUN_030c04ec`), `.w` = `dVar45 − KSys+0xb58`, `dVar45` = 1 by default (conditional branches are not disassembled). - `*.ksysla` ladies do not appear to act.
+`cAmbientMasterIntensity` (+0x6e8) defaults to 1.0.
+`cAmbientScaleChara` (+0x6d8) starts from global vec4 `0x1054a51c`
+and is updated by `0x038b55c4`. `cLook` is the horizontal camera
+look vector. `cMainLightColor.rgb` is `dir_main` color times intensity
+(`0x030c04ec`).
 
 **Interpretation.** The light of the character's surroundings **It doesn't depend on the normal.**: these are two colors of the sky (cube maps of the environment) - above and below the view, with raised saturation and normalized for the average brightness of the environment, with a smooth transition from top to bottom on the screen. `w = sat(1.2·sunshot)`: in the shadow (forest, cave) shadows on the character weaken, direct light is colored in `0.8·Amb`.
 

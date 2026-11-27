@@ -45,6 +45,6 @@ fn mean() -> @location(0) vec4<f32> {
         sum += cube(corner * 0.57735);
     }
     // Full visibility is the default when this view has no Expand pass.
-    let main_light = saturate(1.0 - read_look(look_texture).weather[0].w);
+    let main_light = saturate(read_look(look_texture).light[0].y);
     return vec4<f32>(luma(sum / 14.0), main_light, 0.0, 1.0);
 }
