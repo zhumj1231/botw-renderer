@@ -179,17 +179,32 @@ classified separately at full resolution. The table gives the shader
 writes selected by those material states. The original frame still
 provides the scene-specific coverage and resource values.
 
-The independent `--terrain-deferred` path uses the camera normal prepass
-to mark leaf meshes and character body and face materials. It retains the
-existing alpha cutout and model-to-billboard mask before tagging the visible
-leaf fragments. The half-resolution class pass samples those tags at the
-same coordinates as terrain and scene depth. Character variants use one
-coarse class, 8, because they share the original Expand draw. Both classes
-write visibility from the independent cascade sampler with weight 1.
-Character samples skip the normal bias below the original 0.35 light-facing
-threshold. This path uses the prepass normals and Bevy's shadow maps. It
-still needs class-specific shadow filters, the character's baked far shadow,
-and coverage for far-tree billboards and the remaining field materials.
+The native `uking_tree` pixel variants 7 and 11 both write raw material
+ID 7 after their alpha test. The class mask maps either variant to 6,
+which selects the foliage Expand draw. The analyzer then samples those
+red values alongside terrain and characters. [Far-tree material IDs](wiiu-field-shading.md#grass-and-distant-trees-g-buffer-uking_grass-uking_tree)
+
+The independent `--terrain-deferred` path marks near leaves, far-tree
+billboards, and character body and face materials in the camera normal
+prepass. Billboards share their atlas layer, alpha cutout and model handoff
+mask with the forward draw. They use the atlas normal for the class-6
+visibility query. The half-resolution classifier samples the tags at the
+same coordinates as terrain and scene depth. Character variants share
+class 8. Both classes write visibility from the independent cascade sampler
+with weight 1. Character samples skip the normal bias below the native
+0.35 light-facing threshold. The foliage and character shadow filters,
+the character's baked far shadow and remaining field materials still need
+to be matched.
+
+A 640×360 Hateno Vulkan replay at 10:00 in clear weather forced terrain
+trees to use billboards with `BOTW_FAR_TREES_ONLY=1`. The camera prepass atlas draws
+(EIDs 30804–30843) wrote 2,654 tagged pixels that survived to the final
+normal and depth inputs. Of these, 674 were sampled at half resolution.
+All 674 were class 6 with blue and alpha at 255 in Expand (EID 31645).
+147 had red below 255. LightAnalyzer resolved to 0.705078 on the GPU
+(EID 31717). CPU reconstruction from the recorded final reduction level
+gave 0.705017. The normal forward mode also rendered the same camera
+successfully with the billboard depth prepass enabled.
 
 In the JP v208 KSys update, `0x034019bc–0x034019dc` writes
 `1 - (KSys+0xb58)` to the alpha component of the color passed to

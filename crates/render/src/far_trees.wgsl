@@ -62,11 +62,13 @@ const DISSOLVE: f32 = 0.2;
 @group(#{MATERIAL_BIND_GROUP}) @binding(106) var dither_mask: texture_2d<f32>;
 #ifndef PREPASS_PIPELINE
 @group(#{MATERIAL_BIND_GROUP}) @binding(107) var look_texture: texture_2d<f32>;
+#endif
 // `TreeDitherMask` as the game's pixel shader samples it (`tera_tree_mask`).
 @group(#{MATERIAL_BIND_GROUP}) @binding(108) var tree_mask: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(109) var tree_mask_sampler: sampler;
 // x: the atlas material's alpha-test reference (`Tree0` 0.5, `Tree1` 0.3).
 @group(#{MATERIAL_BIND_GROUP}) @binding(110) var<uniform> params: vec4<f32>;
+#ifndef PREPASS_PIPELINE
 // The environment's mean brightness, once a frame (deferred_light.rs).
 @group(#{MATERIAL_BIND_GROUP}) @binding(111) var cube_means: texture_2d<f32>;
 #endif
@@ -144,7 +146,7 @@ fn corner(vertex: Vertex, from_light: bool) -> Corner {
     return out;
 }
 
-#ifdef PREPASS_PIPELINE
+#ifdef FAR_TREE_SUN_SHADOW
 
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
@@ -198,11 +200,18 @@ fn fragment(in: VertexOutput) {
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
     let c = corner(vertex, false);
-    // The mesh's flags and material slot are looked up by instance.
+#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
     out.instance_index = vertex.instance_index;
+#endif
     out.world_position = vec4<f32>(c.position, 1.0);
     out.position = position_world_to_clip(c.position);
+#ifdef PREPASS_PIPELINE
+#ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
     out.world_normal = vec3<f32>(c.side.x, 0.0, c.side.y);
+#endif
+#else
+    out.world_normal = vec3<f32>(c.side.x, 0.0, c.side.y);
+#endif
     out.uv = vertex.uv;
     // The mask's place on the tree (the VS's `Sem0.zw`): 0.6 × the picture's
     // width and height in metres (`gsys_user0[5].xy` = 1) × its uv.
@@ -234,27 +243,74 @@ fn game_layer(packed: f32, phase: f32, u: f32, mask: f32) -> i32 {
     return i32(first + round(views * fract((w - 0.25 * mask) / views) - 0.5));
 }
 
-@fragment
-fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+struct CameraAtlasSample {
+    layer: i32,
+    mask: f32,
+    color: vec4<f32>,
+}
+
+fn camera_atlas_sample(in: VertexOutput) -> CameraAtlasSample {
     let mask = textureSample(tree_mask, tree_mask_sampler, in.uv_b).r;
     let layer = game_layer(in.color.w, in.color.z, in.uv.x, mask);
-    let color = textureSample(albedo, albedo_sampler, in.uv, layer);
-    // Normal x and y (picture right and up) in red and green,
-    // translucency in blue.
-    let packed = textureSample(normals, albedo_sampler, in.uv, layer).rgb;
+    return CameraAtlasSample(layer, mask, textureSample(albedo, albedo_sampler, in.uv, layer));
+}
+
+fn outside_camera_cutout(in: VertexOutput, atlas: CameraAtlasSample) -> bool {
     // The game's alpha test: f·(2a − 0.5 − sat(4a − 3)) + 0.07 +
     // Sem5.x·(mask − 1) against the material's reference.
-    let cut = FADE * (2.0 * color.a - 0.5 - saturate(4.0 * color.a - 3.0)) + 0.07 + DITHER_WEIGHT * (mask - 1.0);
-    if cut < params.x || billboard_hidden(dither_mask, in.position.xy, i32(in.color.g + 0.5)) {
+    let a = atlas.color.a;
+    let cut = FADE * (2.0 * a - 0.5 - saturate(4.0 * a - 3.0)) + 0.07 + DITHER_WEIGHT * (atlas.mask - 1.0);
+    return cut < params.x || billboard_hidden(dither_mask, in.position.xy, i32(in.color.g + 0.5));
+}
+
+fn atlas_normal(encoded: vec2<f32>, facing: vec3<f32>) -> vec3<f32> {
+    let xy = encoded * 2.007874 - 1.007874;
+    let right = vec3<f32>(facing.z, 0.0, -facing.x);
+    return normalize(right * xy.x + vec3<f32>(0.0, xy.y, 0.0) + facing * sqrt(saturate(1.0 - dot(xy, xy))));
+}
+
+#ifdef PREPASS_PIPELINE
+
+#ifdef PREPASS_FRAGMENT
+@fragment
+fn fragment(in: VertexOutput) -> FragmentOutput {
+    let atlas = camera_atlas_sample(in);
+#ifdef NORMAL_PREPASS
+    let packed = textureSample(normals, albedo_sampler, in.uv, atlas.layer).rg;
+#endif
+    if outside_camera_cutout(in, atlas) {
+        discard;
+    }
+    var out: FragmentOutput;
+#ifdef NORMAL_PREPASS
+    let normal = atlas_normal(packed, normalize(in.world_normal));
+    // Match the normal prepass tag used by near foliage for Expand class 6.
+    out.normal = vec4(normal * 0.5 + vec3(0.5), 1.0 / 3.0);
+#endif
+    return out;
+}
+#else
+@fragment
+fn fragment(in: VertexOutput) {
+    if outside_camera_cutout(in, camera_atlas_sample(in)) {
+        discard;
+    }
+}
+#endif
+
+#else
+
+@fragment
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    let atlas = camera_atlas_sample(in);
+    let packed = textureSample(normals, albedo_sampler, in.uv, atlas.layer).rgb;
+    if outside_camera_cutout(in, atlas) {
         discard;
     }
 
     var pbr_input = pbr_input_from_standard_material(in, is_front);
-    pbr_input.material.base_color = vec4<f32>(color.rgb, 1.0);
-    let xy = packed.rg * 2.007874 - 1.007874;
-    let facing = normalize(in.world_normal);
-    let right = vec3<f32>(facing.z, 0.0, -facing.x);
-    let normal = normalize(right * xy.x + vec3<f32>(0.0, xy.y, 0.0) + facing * sqrt(saturate(1.0 - dot(xy, xy))));
+    pbr_input.material.base_color = vec4<f32>(atlas.color.rgb, 1.0);
+    let normal = atlas_normal(packed.rg, normalize(in.world_normal));
     pbr_input.N = normal;
     pbr_input.world_normal = normal;
 
@@ -262,7 +318,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // normal.w flag; light passes through (albedo.a bit 1) wherever the
     // translucency is above zero (leaves; trunks hold 0).
     var surface: FieldSurface;
-    surface.albedo = color.rgb;
+    surface.albedo = atlas.color.rgb;
     surface.N = normal;
     surface.gloss = 0.0;
     surface.metal = 0.0;
@@ -284,5 +340,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     out.color = main_pass_post_lighting_processing(pbr_input, vec4<f32>(lit, 1.0));
     return out;
 }
+
+#endif
 
 #endif

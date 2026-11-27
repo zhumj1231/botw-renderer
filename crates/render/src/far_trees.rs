@@ -25,12 +25,15 @@ use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::NoAutoAabb;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::NotShadowCaster;
-use bevy::mesh::{Indices, PrimitiveTopology};
-use bevy::pbr::{ExtendedMaterial, MaterialExtension};
+use bevy::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
+use bevy::pbr::{
+    ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
+    MeshPipelineKey,
+};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor,
-    TextureViewDimension,
+    AsBindGroup, Extent3d, RenderPipelineDescriptor, SpecializedMeshPipelineError, TextureDimension,
+    TextureFormat, TextureViewDescriptor, TextureViewDimension,
 };
 use bevy::shader::ShaderRef;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
@@ -145,8 +148,20 @@ impl MaterialExtension for FarTreeExtension {
         SHADER.into()
     }
 
-    fn enable_prepass() -> bool {
-        false
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        // Bevy's directional shadow views use unclipped depth on both native and emulated paths.
+        if key.mesh_key.contains(MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO) {
+            descriptor.vertex.shader_defs.push("FAR_TREE_SUN_SHADOW".into());
+            if let Some(fragment) = &mut descriptor.fragment {
+                fragment.shader_defs.push("FAR_TREE_SUN_SHADOW".into());
+            }
+        }
+        Ok(())
     }
 
     // Trees cast their shadows within the sun's cascades.
