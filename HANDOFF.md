@@ -1,19 +1,22 @@
 # BOTW renderer research handoff
 
-Work in the **botw-renderer** repository on `fix_vulkan_object_shader`. The
+Work in the **botw-renderer** repository on `rendering_deep_dive`. The
 goal is to reproduce the Wii U rendering pipeline and image as closely as the
 evidence allows, measure the cost of the resulting passes, and keep the
 research reproducible. Use Hateno as the first regression scene. The 3D map
 project and the Unity port are downstream work. Read [CLAUDE.md](CLAUDE.md)
-for repository rules and [README.md](README.md) for general setup.
+for repository rules and [README.md](README.md) for general setup. Begin
+each module with the [research index](docs/research/README.md) and its
+[source catalog](docs/research/sources.md).
 
 ## Start on a second machine
 
 Clone the branch and build it with the locked dependencies.
 
 ```sh
-git clone --branch fix_vulkan_object_shader https://github.com/zhumj1231/botw-renderer.git
+git clone --branch rendering_deep_dive https://github.com/zhumj1231/botw-renderer.git
 cd botw-renderer
+git rev-parse HEAD
 cargo fetch --locked
 cargo build --release --locked -p render
 cargo test --release --locked -p render
@@ -35,13 +38,21 @@ start.
 cargo bake --region hateno --radius 1000 --out assets-hateno
 ```
 
+On an existing bake, check for `light/solar_irradiation.ktx2`. The
+class-8 far-shadow comparison needs that resource. If it is missing, use
+the user's original base and v208 update roots and re-bake only lighting.
+
+```powershell
+cargo bake --game $base --game $update --only light --out $assets
+```
+
 The renderer only needs the baked assets. Cemu is needed only for new
 original-game captures. Keep the dump, asset bundles, local configuration,
 shader dumps and RenderDoc captures outside tracked files.
 
 ## Reproduce the verified renderer paths
 
-The previous machine ran all three paths with Vulkan on Windows and an
+The earlier terrain checkpoint ran all three paths with Vulkan on Windows and an
 RTX 4080 Laptop GPU. On Windows PowerShell, select the same backend with
 `$env:WGPU_BACKEND = 'vulkan'`. Create the local `captures` directory before
 running the screenshot commands below.
@@ -65,10 +76,19 @@ cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesk
   mean absolute difference was 0.0118 per linear RGB channel before tone
   mapping. This measures the renderer's own migration. Treat new capture
   EIDs and exact pixel counts as frame-specific.
+- At `4333fb9`, the main view began skipping redundant forward terrain
+  once deferred geometry and lighting are ready. It still has a forward
+  loading fallback. The older same-frame comparison above was recorded
+  while both draws were present.
+- At `aebec37`, separate foliage and opaque character filters feed
+  visibility into Expand and LightAnalyzer. Foliage was checked with a
+  Vulkan replay. The Link Vulkan/RenderDoc run on the GTX 1660 SUPER did
+  not produce a replay. Character verification used DX12 staging readback.
+  See the [case settings and limits](docs/research/wiiu-character-shading.md#expand-visibility-for-foliage-and-opaque-characters).
 - Independent screenshots are for inspection. Cloud shadows can move
-  between runs even with a fixed time of day and weather. For a numerical
-  A/B while both draws are present, read the same HDR attachment immediately
-  before and after `compose` and filter by full-resolution D16 class 4.
+  between runs even with a fixed time of day and weather. Use the
+  [research workflow](docs/research/README.md#baseline-for-repeated-comparison)
+  when making a numerical comparison.
 
 The original reference is Wii U JPN v208 in Cemu 1.26.2f with Vulkan and
 zero graphics packs, frame 3830. Keep its observations separate from the
@@ -82,33 +102,20 @@ with the event map as a reference for matching pipeline state.
 
 ## Continue here
 
-1. **Remove the duplicate forward draw from the experimental main view.**
-   The current path draws forward terrain first and overwrites its class-4
-   pixels during HDR composition. Gate the removal on readiness of the
-   custom geometry and lighting resources. Preserve depth-prepass, shadow
-   and cubemap behavior. Check startup, camera jumps and tile streaming
-   for missing terrain before timing the new path. The default forward
-   mode remains the reference and fallback during loading.
-2. **Measure the terrain path after the duplicate draw is gone.** Fix
-   renderer backend, adapter, resolution, Hateno camera and scene settings.
-   Use `--profile` and GPU pass timings, with a warm scene and a repeatable
-   camera run. Record the depth prepass, geometry, both class passes,
-   pre-shading and HDR composition separately. Compare frame cost on the
-   same machine. The existing captures do not establish a performance win.
-3. **Match the original guided reconstruction.** Start at
-   `guide_texel` in
-   [lighting.wgsl](crates/render/src/terrain_gbuffer/lighting.wgsl) and
-   compare it to the original EID 12855. Follow the four depth and R8
-   encoded-normal samples through to the final sample coordinate and check
-   steep slopes, silhouettes and class boundaries. The current four-neighbor
-   ranking, Bevy depth reconstruction and mapped-normal shadow bias are
-   documented approximations (SI-GBUF-03/04). Leave lighting coefficients
-   in place while resolving these structural differences.
-4. **Extend coverage after terrain is verified.** Add the second shared
-   pre-shading layer used by water and extend D16 class coverage to the
-   other materials. Treat the exact cube update cadence, probe placement
-   and native shadow scheduling as research questions until captures
-   establish them.
+1. **Trace representative materials.** Start from the
+   [material variant mapping](docs/research/wiiu-material-variants.md).
+   Trace terrain, foliage, skin and equipment through texture decoding,
+   shader selection, G-buffer writes and final HDR. Cite the capture and
+   program for each case and update the
+   [capture checklist](docs/research/wiiu-deferred-shading.md#original-wii-u-capture-checklist).
+2. **Compare live lighting inputs with the original.** Use a matched
+   Wii U JP v208 Hateno view. Confirm cascade splits and depth texture,
+   comparison state, Expand red by class, and live analyzer and exposure
+   values. Use the archived replay for questions it covers.
+3. **Match guided reconstruction and remaining material paths.** Compare
+   `guide_texel` to original EID 12855 and check slopes, silhouettes and
+   material boundaries. Verify the second shared pre-shading layer used
+   by water. Measure cost after the techniques and inputs are aligned.
 
 Start code review in [terrain_gbuffer.rs](crates/render/src/terrain_gbuffer.rs)
 for scheduling, target allocation and D16 classification,

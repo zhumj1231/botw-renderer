@@ -2,6 +2,8 @@
 
 BotW world renderer: a free camera, weather, effects and character animation
 previews from baked assets. Setup and rendering status: [README.md](README.md).
+For rendering research, start with the [research index](docs/research/README.md)
+and its [source catalog](docs/research/sources.md).
 
 ## Rules
 - Reply in Russian; repository documentation, code comments and commit messages in English.
