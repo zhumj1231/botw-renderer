@@ -1,4 +1,5 @@
 //! Field G-buffer attachments, class-depth passes and diagnostic display.
+mod ambient;
 mod geometry;
 mod lighting;
 use bevy::asset::{load_internal_asset, uuid_handle};

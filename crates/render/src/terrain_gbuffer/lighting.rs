@@ -26,6 +26,7 @@ use crate::deferred_light::{CubeMean, SsaoNoise};
 use crate::look::LookTexture;
 
 use super::{CLASS_DEPTH, FIELD_CLASS, Stages, Targets, class_group, classify, color, target};
+use super::ambient::{LightAnalysis, LightAnalyzerPipelines, LightAnalyzerPlugin, allocate_reduction};
 use super::geometry::{TerrainMeshes, draw_geometry};
 
 const SHADER: Handle<Shader> = uuid_handle!("e9b6a2f4-b244-46a5-bf90-36303dcd704a");
@@ -40,6 +41,7 @@ pub(super) struct TerrainLightingPlugin;
 impl Plugin for TerrainLightingPlugin {
     fn build(&self, app: &mut App) {
         load_internal_asset!(app, SHADER, "lighting.wgsl", Shader::from_wgsl);
+        app.add_plugins(LightAnalyzerPlugin);
         app.add_plugins((
             ExtractResourcePlugin::<CloudShadows>::default(),
             ExtractResourcePlugin::<SsaoNoise>::default(),
@@ -108,6 +110,7 @@ impl RenderCommand<Opaque3d> for SkipDeferredTerrain {
 
 pub(super) struct LightingTargets {
     expand: CachedTexture,
+    reduction: Vec<CachedTexture>,
     shadow: CachedTexture,
     fog: CachedTexture,
     diffuse: CachedTexture,
@@ -121,6 +124,7 @@ pub(super) fn allocate_targets(
 ) -> LightingTargets {
     LightingTargets {
         expand: get("field_half_expand", EXPAND, size),
+        reduction: allocate_reduction(size, &mut get),
         shadow: get("field_half_shadow", SHADOW, size),
         fog: get("field_half_fog", INDIRECT, size),
         diffuse: get("field_half_diffuse", INDIRECT, size),
@@ -259,6 +263,7 @@ pub(super) struct LightingPasses {
     compose: RenderPipeline,
     classes: BindGroup,
     expand_inputs: BindGroup,
+    analysis: LightAnalysis,
     pre_inputs: BindGroup,
     compose_inputs: BindGroup,
 }
@@ -269,6 +274,7 @@ fn prepare_lighting(
     pbr: Res<DeferredLightingLayout>,
     keys: Res<ViewKeyCache>,
     layouts: Res<LightingLayouts>,
+    analyzer: Res<LightAnalyzerPipelines>,
     cache: Res<PipelineCache>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
@@ -296,6 +302,16 @@ fn prepare_lighting(
         images.get(&noise.0),
         images.get(&cube.0),
         images.get(&clouds.shadow_map),
+    ) else {
+        return;
+    };
+    let Some(analysis) = analyzer.prepare(
+        &cache,
+        &device,
+        &out_lit.expand.default_view,
+        &out_lit.reduction,
+        &look.texture_view,
+        &cube.texture_view,
     ) else {
         return;
     };
@@ -364,6 +380,7 @@ fn prepare_lighting(
         compose: compose.clone(),
         classes,
         expand_inputs,
+        analysis,
         pre_inputs,
         compose_inputs,
     });
@@ -386,6 +403,7 @@ fn draw_lighting(
         compose,
         classes,
         expand_inputs,
+        analysis,
         pre_inputs,
         compose_inputs,
     } = passes;
@@ -397,8 +415,10 @@ fn draw_lighting(
         bindings,
         expand_inputs,
         &out.half,
+        &[0, FIELD_CLASS],
         &[color(&out_lit.expand.default_view)],
     );
+    analysis.draw(&mut render, &out_lit.reduction);
     draw(
         &mut render,
         "field half pre-shading",
@@ -406,6 +426,7 @@ fn draw_lighting(
         bindings,
         pre_inputs,
         &out.half,
+        &[FIELD_CLASS],
         &[
             color(&out_lit.shadow.default_view),
             color(&out_lit.fog.default_view),
@@ -423,10 +444,11 @@ fn draw_lighting(
         bindings,
         compose_inputs,
         &out.full,
+        &[FIELD_CLASS],
         &[Some(view_target.get_unsampled_color_attachment())],
     );
     if !*logged {
-        info!("Terrain half Expand and pre-shading, and class Equal HDR composition active");
+        info!("Terrain deferred chain active: Expand, LightAnalyzer, pre-shading, HDR composition");
         *logged = true;
     }
 }
@@ -438,6 +460,7 @@ fn draw(
     view: &MeshViewBindGroup,
     inputs: &BindGroup,
     classification: &CachedTexture,
+    classes: &[u8],
     colors: &[Option<RenderPassColorAttachment>],
 ) {
     let mut pass = render.begin_tracked_render_pass(RenderPassDescriptor {
@@ -454,6 +477,8 @@ fn draw(
     pass.set_bind_group(0, &view.main, &view.main_offsets);
     pass.set_bind_group(1, &view.binding_array, &[]);
     pass.set_bind_group(2, inputs, &[]);
-    let class = u32::from(FIELD_CLASS);
-    pass.draw(0..3, class..class + 1);
+    for &class in classes {
+        let class = u32::from(class);
+        pass.draw(0..3, class..class + 1);
+    }
 }

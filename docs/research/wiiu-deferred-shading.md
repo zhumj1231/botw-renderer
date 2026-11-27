@@ -72,12 +72,36 @@ what is beneath the surface.
 
 | Input | Source and remaining work |
 | --- | --- |
-| Indirect light and exposure | Native `LightAnalyzer` reduces `Expand.x` and samples the environment cube. The result controls ambient brightness and saturation. The host measures cube brightness but fixes the sunlit share at `0.85`. The new terrain Expand target provides the first input to a reduction. Its current coverage is limited to terrain. [Native reduction and exposure](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
+| Indirect light and exposure | Native `LightAnalyzer` reduces `Expand.x` and samples the environment cube. The result controls ambient brightness and saturation. The host now reduces the view's visibility into the second channel of its shared cube-mean texture. Terrain, forward field materials, characters and particles use the same value. [Native reduction and exposure](wiiu-character-shading.md#the-light-of-the-environment-lightanalyzer--gsys_user4--sem2) |
 | SSAO and dynamic shadow | Native field PS 128 uses half normalized linear depth, a noise-rotated AO footprint and a dynamic shadow range. The host writes its existing AO and Bevy cascade visibility into Expand. Terrain ambient reads the AO from that texture. [Field visibility and AO](wiiu-field-shading.md#ps-128-shadows-and-ssao--expand) |
 | Sky, day/night and weather | The host uses the baked area and time-of-day palettes, separate sun and moon paths, cloud shadows, fog scattering and a shared look texture. Regional climate and temperature drive the forecast, including conversion of rain to snow in the cold. Rain and snow also feed the effect system. An independent seasonal input has yet to be traced. [Weather and precipitation](weather.md) · [Sky resources](wiiu-sky-resources.md) |
 
-The next indirect-light comparison needs to distinguish valid surface
-samples from cleared pixels before applying the reduction to the scene.
+When terrain deferred lighting is active, Expand contributes the field's
+shadow-map visibility and writes 1 where class 0 has no scene depth. For
+opaque pixels outside the host G-buffer, the reduction carries zero
+weight. Linear downsampling carries both red visibility and alpha weight
+through the intermediate levels, then samples their center and divides.
+The result is weighted by the current clear-sky share, the host's
+counterpart to `cMainLightColor.w`. Views without Expand use that weather
+weight alone. The native full material coverage and initial reduction
+scale are still missing from this path.
+
+In the independent 640×360 Hateno Vulkan replay, the half-sized input
+contained 51,593 terrain samples and 6,007 depth-covered pixels outside
+that G-buffer. Those three replays used the same camera and projection.
+
+| Case | Reduced visibility before weather | Analyzer coefficient | Mean terrain diffuse luminance |
+| --- | ---: | ---: | ---: |
+| Clear 10:00 | 0.748 | 0.749 | 0.355 |
+| Cloudy 10:00 | 0.748 | 0.000 | 0.323 |
+| Clear 23:00 | 0.146 | 0.146 | 0.296 |
+
+The luminance column is from the terrain pre-shading attachment in linear
+render units. A zero analyzer coefficient still allows environment light.
+The same GPU readback with the synthetic valley's open sky verified all
+6,507 background samples as full visibility. The forward-only case also
+rendered with the weather-derived fallback.
+
 Frozen day/night and weather cases can exercise this path with the existing
 baked region. The independent path completed the 1280×720 Hateno night
 case at 23:00 and the forced snow case at 10:00. The latter showed the

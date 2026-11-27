@@ -11,7 +11,7 @@
 #import bevy_pbr::mesh_view_bindings::view
 #import bevy_pbr::prepass_utils
 #import botw::look::{read_look, read_look_at, apply_haze, sky_cover}
-#import botw::deferred_light::{field_ambient, cube_at, cube, cube_mean}
+#import botw::deferred_light::{field_ambient, cube_at, cube, cube_mean, analyzed_light_share}
 
 struct Particle {
     local_pos: vec4<f32>,
@@ -645,15 +645,13 @@ const EFFECT_SAT: f32 = 2.0;
 const FIELD_OFFSET_MIN: f32 = 0.1;
 const FIELD_OFFSET_MAX: f32 = 0.5;
 const FIELD_SCALE: f32 = 1.0;
-// SI-LGT-07 (shared with the field): the frame's sunlit share.
-const SUNLIT_SHARE: f32 = 0.85;
-
 fn effect_texel(dir: vec3<f32>) -> vec3<f32> {
     let c = cube(normalize(dir));
     let m = max(c.r, max(c.g, c.b));
     let s = 1.0 - min(c.r, min(c.g, c.b)) / (m + 1e-10);
     let f = pow(s + 1e-4, EFFECT_SAT - 1.0);
-    let e = SUNLIT_SHARE * SUNLIT_SHARE * SUNLIT_SHARE;
+    let x = analyzed_light_share(cube_means);
+    let e = x * x * x;
     let mean = cube_mean(cube_means);
     return (m + (c - m) * f) * FIELD_SCALE / (mean + mix(FIELD_OFFSET_MIN, FIELD_OFFSET_MAX, e));
 }

@@ -72,13 +72,14 @@ struct PreShading {
 struct FieldVertexOutput {
     @invariant @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    @location(1) @interpolate(flat) code: u32,
 }
 
 @vertex
 fn field_vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) code: u32) -> FieldVertexOutput {
     let uv = vec2<f32>(f32(vertex >> 1u), f32(vertex & 1u)) * 2.0;
     let xy = uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0);
-    return FieldVertexOutput(vec4(xy, f32(code) / 255.0, 1.0), uv);
+    return FieldVertexOutput(vec4(xy, f32(code) / 255.0, 1.0), uv, code);
 }
 
 fn field_visibility(pixel: FieldPixel, light: MainLight, half_size: vec2<f32>) -> vec4<f32> {
@@ -118,7 +119,12 @@ fn field_half_size() -> vec2<f32> {
 @fragment
 fn expand(in: FieldVertexOutput) -> @location(0) vec4<f32> {
     let half_size = field_half_size();
-    return field_visibility(field_pixel(in.position.xy / half_size), main_light_source(), half_size);
+    let uv = in.position.xy / half_size;
+    if in.code == 0u {
+        // Opaque materials outside this G-buffer leave no visibility sample yet.
+        return vec4(select(0.0, 1.0, scene_depth(uv) == 0.0));
+    }
+    return field_visibility(field_pixel(uv), main_light_source(), half_size);
 }
 
 @fragment

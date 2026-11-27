@@ -5,11 +5,14 @@
 // same samples as `cube()` there, without the light's strength and the
 // exposure, which `cube_mean()` applies to the mean.
 
+#import botw::look::read_look
+
 // The view's environment map (its specular levels) and its sampler.
 @group(0) @binding(0) var environment: texture_cube<f32>;
 @group(0) @binding(1) var environment_sampler: sampler;
 // The view's turn of the map (`light_probes.view_rotation`).
 @group(0) @binding(2) var<uniform> rotation: vec4<f32>;
+@group(0) @binding(3) var look_texture: texture_2d<f32>;
 
 // As in deferred_light.wgsl.
 // SI-LGT-08: cube-map light mean, LOD and offsets are ours.
@@ -41,5 +44,7 @@ fn mean() -> @location(0) vec4<f32> {
         let corner = vec3<f32>(select(1.0, -1.0, (i & 1) != 0), select(1.0, -1.0, (i & 2) != 0), select(1.0, -1.0, (i & 4) != 0));
         sum += cube(corner * 0.57735);
     }
-    return vec4<f32>(luma(sum / 14.0), 0.0, 0.0, 1.0);
+    // Full visibility is the default when this view has no Expand pass.
+    let main_light = saturate(1.0 - read_look(look_texture).weather[0].w);
+    return vec4<f32>(luma(sum / 14.0), main_light, 0.0, 1.0);
 }

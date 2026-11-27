@@ -131,9 +131,16 @@ PS 483 does the same and multiplies by `cForceShadowRatio`. The last
 reduction target becomes `cExposure`, which PS 487 samples at `(0.5, 0.5)`
 before multiplying by `cMainLightColor.w` and cubing the result. The
 intermediate `TextureSampler` is initialized with clamp and linear
-filtering by `GX2InitSampler` at `0x03a82fcc`. These static findings leave
-the live input viewport and the treatment of unwritten Expand pixels to
-be verified.
+filtering by `GX2InitSampler` at `0x03a82fcc`.
+
+The `preshading_shadow_clear` material selects class 0. Its JP v208
+PS 132–135 binaries are identical and export `(1, 1, 1, 1)` to Expand.
+The reduction shader has one red-channel sample per output pixel with no
+material test. Background pixels written by that pass therefore count as
+full visibility. Field, foliage and character shadow variants supply their
+own red values before the reduction. The native reduction also scales its
+starting dimensions before the repeated halving. The exact live source
+dimensions were not captured for this analysis.
 
 ```text
 e     = (cExposure·main.w)³,  avg = luma(cCubeMap2D)

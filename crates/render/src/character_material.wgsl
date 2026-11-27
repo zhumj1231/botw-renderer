@@ -35,7 +35,7 @@
     view_transformations::{direction_world_to_view, position_world_to_view, frag_coord_to_uv},
 }
 #import botw::deferred_light::{
-    Frame, luma, max3, min3, cube, cube_mean, SUNLIT_SHARE, edge, game_frame, main_light, local_lights,
+    Frame, luma, max3, min3, cube, cube_mean, analyzed_light_share, edge, game_frame, main_light, local_lights,
 }
 #import botw::normal_map::mapped_normal
 #endif
@@ -181,7 +181,7 @@ fn character_color(
 
     // The analyzer's ambient: the sky ahead above (top of the screen) and
     // below (bottom), its share of shadow weight `w`.
-    let x = SUNLIT_SHARE;
+    let x = analyzed_light_share(means);
     let e = x * x * x;
     let w = saturate(1.2 * x);
     // Towards the view's horizontal (the camera's forward, `cLook`).

@@ -105,11 +105,11 @@ fn cube_mean(means: texture_2d<f32>) -> f32 {
 
 // --- LightAnalyzer (`gsys_user4`) ---
 
-// Share of the frame in sunlight (the game averages its shadow buffer each
-// frame, `cExposure`): not measured here, a typical open field. An
-// approximation (archived GAPS.md notes, RENDER-003).
-// SI-LGT-07: SUNLIT_SHARE replaces the game's mean Expand.x after PS 124/120/128.
-const SUNLIT_SHARE: f32 = 0.85;
+// The view's averaged visibility times the main light weight.
+fn analyzed_light_share(means: texture_2d<f32>) -> f32 {
+    return textureLoad(means, vec2<i32>(0), 0).g;
+}
+
 // The analyzer's field parameters (`ksysla` defaults, 0x038b37c0).
 const FIELD_SAT: f32 = 0.5;
 const FIELD_SAT_MIN: f32 = 0.8;
@@ -130,7 +130,8 @@ struct FieldAmbient {
 }
 
 fn field_ambient(means: texture_2d<f32>) -> FieldAmbient {
-    let e = SUNLIT_SHARE * SUNLIT_SHARE * SUNLIT_SHARE;
+    let x = analyzed_light_share(means);
+    let e = x * x * x;
     let mean = cube_mean(means);
     var a: FieldAmbient;
     // SI-LGT-08: cube-map light mean, LOD and offsets are ours.

@@ -16,7 +16,7 @@ use bevy::light::EnvironmentMapLight;
 use bevy::prelude::*;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_resource::binding_types::{sampler, texture_cube, uniform_buffer};
+use bevy::render::render_resource::binding_types::{sampler, texture_2d, texture_cube, uniform_buffer};
 use bevy::render::render_resource::{
     BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BufferInitDescriptor,
     BufferUsages, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d, FragmentState,
@@ -29,6 +29,7 @@ use bevy::render::texture::GpuImage;
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 
 use crate::camera::MainCamera;
+use crate::look::LookTexture;
 
 const SHADER: Handle<Shader> = uuid_handle!("4b7e0c2d-93a1-4f58-b6d2-8e1f3a9c5d70");
 /// `botw::normal_map`: the models' normal from their normal maps.
@@ -36,7 +37,7 @@ const NORMAL_MAP_SHADER: Handle<Shader> = uuid_handle!("9d3f6a1e-2c84-4b7a-a5e0-
 /// `cube_mean.wgsl`: the environment's mean brightness.
 const CUBE_MEAN_SHADER: Handle<Shader> = uuid_handle!("c5a2e7d1-6b38-4f90-8e14-3d7b9a0f2c56");
 /// The texel [`CubeMean`] is drawn into.
-const CUBE_MEAN_FORMAT: TextureFormat = TextureFormat::R32Float;
+pub(crate) const CUBE_MEAN_FORMAT: TextureFormat = TextureFormat::Rg32Float;
 
 pub struct DeferredLightPlugin {
     /// The `assets/` folder; without the baked noise, the stand-in rotations.
@@ -86,9 +87,8 @@ impl Plugin for DeferredLightPlugin {
 
 /// The environment's mean brightness (`cube_mean()` in
 /// `deferred_light.wgsl`): one texel the render world draws once a frame
-/// from the view's environment map (`cube_mean.wgsl`), before the light's
-/// strength and the exposure; every field material binds it. The value is
-/// the same for every pixel of a frame, so its 14 samples are taken once.
+/// from the view's environment map (`cube_mean.wgsl`). Its green channel
+/// carries the analyzed share of the main light for the same view.
 #[derive(Resource, Clone, ExtractResource)]
 pub struct CubeMean(pub Handle<Image>);
 
@@ -116,6 +116,7 @@ fn init_cube_mean_pipeline(
                 texture_cube(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
                 uniform_buffer::<Vec4>(false),
+                texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         ),
     );
@@ -152,6 +153,7 @@ fn extract_cube_mean_source(
 /// this frame (when it does) and before the views are drawn.
 fn draw_cube_mean(
     mean: Option<Res<CubeMean>>,
+    look: Res<LookTexture>,
     source: Res<CubeMeanSource>,
     pipeline: Option<Res<CubeMeanPipeline>>,
     pipeline_cache: Res<PipelineCache>,
@@ -163,9 +165,10 @@ fn draw_cube_mean(
     else {
         return;
     };
-    let (Some(target), Some(environment), Some(render_pipeline)) = (
+    let (Some(target), Some(environment), Some(look), Some(render_pipeline)) = (
         images.get(&mean.0),
         images.get(environment),
+        images.get(&look.0),
         pipeline_cache.get_render_pipeline(pipeline.pipeline),
     ) else {
         return;
@@ -184,6 +187,7 @@ fn draw_cube_mean(
             &environment.texture_view,
             &environment.sampler,
             buffer.as_entire_binding(),
+            &look.texture_view,
         )),
     );
     let mut pass = ctx
