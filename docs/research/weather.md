@@ -629,6 +629,44 @@ The pulse texel `v = 0` lies on the boundary between the first and last
 rows of the wrapped, bilinear texture (half-texel), so `p` is the 50/50 mix
 of rows 0 and 63 at `u = time/8 + …` (texture coordinate units, wrap).
 
+### Live rain and post-rain comparison
+
+Wii U JP v208, Cemu 1.26.2f Vulkan, zero active graphics packs.
+Frame 46236 records active rain and frame 53396 records the same view
+after rain stopped under cloudy skies. The inverse-view positions
+differ by 0.00173 m and their 3×3 basis entries differ by at most
+2.12e-5. All four matched half-resolution pixels remain class 4.
+The largest observed view-depth change at these points is below 0.010 m.
+
+In the rain frame, EID 10972 selects a different field pre-shading
+fragment program from the dry control. At its wetness multiplier,
+remapped PS vector 27.w is 0.800000. The value is 0 at EID 11905
+after the rain, and that draw matches the archived dry program by
+byte digest. Sample the second byte of the RGBA8 Shadow target:
+
+| Half pixel | Approximate view depth (m) | Rain Shadow.G | Post-rain Shadow.G |
+| --- | ---: | ---: | ---: |
+| (53, 231) | 11.37 | 189 | 0 |
+| (159, 154) | 80.00 | 184 | 0 |
+| (222, 169) | 121.09 | 109 | 0 |
+| (272, 240) | 9.90 | 142 | 0 |
+
+Among class-4 texels changed by the rain draw, 84,187 have nonzero
+Shadow.G. At 200 m and farther all 48 changed texels have zero in
+that channel. The translated rain shader evaluates
+`1 - saturate(z/120 - 2/3)`. The fade starts at 80 m and reaches zero
+at 200 m, consistent with nonzero samples beyond 120 m.
+
+Full-resolution field composition EIDs 12516 and 13780 read the
+640×360 Shadow resource in PS11. The first selects a non-dry
+fragment program and the second matches the dry field program.
+For full pixel (107,463), HDR RGB changes from
+`(0.201172, 0.197266, 0.087891)` to
+`(0.316406, 0.240234, 0.091797)`. The captures also differ in
+main light and haze. Use a wetness-only replay to isolate its effect
+on HDR. This pair establishes the original wet and fully dried states.
+The time course between those states still needs samples.
+
 ### 11.5 Main pass (fact)
 
 ```text
