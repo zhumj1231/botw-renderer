@@ -684,3 +684,26 @@ target 5 the excess emissive color. It is not a regular color-overlay
 program. Until that deferred pass is ported, custom shader 4 is opt-in
 as an explicitly incomplete debug preview (SI-EFX-36); ordinary smoke
 and cloud emitters (custom shader 3) remain active.
+
+## Wind-blown ground haze and airborne debris
+
+Open research item 7, added 2026-11-28. The user identified two effects
+in a supplied gameplay recording. The first is wind-blown ground haze.
+The second is small fragments that look like loose grass or leaves.
+Keep the recording local.
+
+The EFT archive has a wind constant block and wind-dependent vertex
+motion and UV scroll. Candidate explanations for the haze include
+translucent emitters and local fog geometry. Candidate explanations
+for airborne debris include billboard particles and small meshes.
+The exact variant, asset and trigger for each effect are open. Ground
+grass mesh deformation and global atmospheric fog are nearby systems
+to check separately in the capture.
+
+Capture the view before, during and after a gust. Locate the draw
+writers from the visible pixels and inspect shader input, winding and
+geometry, texture, depth and blend state. Trace any matching emitter
+back to the resource archive and test which wind and spawn controls
+it actually uses. Use the CEDEC 2017 effects abstract for the team's
+design context and the captured draw for implementation evidence.
+[Official CEDEC abstract](https://cedec.cesa.or.jp/2017/session/VA/s58eed8209ffce.html)
