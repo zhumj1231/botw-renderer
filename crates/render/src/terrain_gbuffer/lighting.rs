@@ -2,11 +2,13 @@
 use std::collections::HashMap;
 
 use bevy::asset::{load_internal_asset, uuid_handle};
-use bevy::core_pipeline::core_3d::{Opaque3d, main_opaque_pass_3d, main_transparent_pass_3d};
+use bevy::core_pipeline::core_3d::{Opaque3d, main_opaque_pass_3d};
 use bevy::core_pipeline::schedule::{Core3d, Core3dSystems};
 use bevy::ecs::system::{SystemParamItem, lifetimeless::SRes};
 use bevy::pbr::deferred::DeferredLightingLayout;
-use bevy::pbr::{DrawMaterial, MeshPipelineKey, MeshViewBindGroup, ViewKeyCache};
+use bevy::pbr::{
+    DrawMaterial, MeshPipelineKey, MeshViewBindGroup, ViewKeyCache, main_transmissive_pass_3d,
+};
 use bevy::prelude::*;
 use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::render::render_asset::RenderAssets;
@@ -56,7 +58,7 @@ impl Plugin for TerrainLightingPlugin {
                         .before(main_opaque_pass_3d),
                     draw_lighting
                         .after(main_opaque_pass_3d)
-                        .before(main_transparent_pass_3d),
+                        .before(main_transmissive_pass_3d),
                 )
                     .in_set(Core3dSystems::MainPass),
             );
