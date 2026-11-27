@@ -16,7 +16,8 @@ fn classification_depth(uv: vec2<f32>, mask: u32) -> f32 {
 
 @fragment
 fn classify_half(in: FullscreenVertexOutput) -> @builtin(frag_depth) f32 {
-    return classification_depth(in.uv, 0x0eu);
+    let half_size = vec2<f32>(max(textureDimensions(classifications) / 2u, vec2(1u)));
+    return classification_depth(in.position.xy / half_size, 0x0eu);
 }
 
 @fragment

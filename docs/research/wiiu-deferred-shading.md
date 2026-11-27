@@ -92,6 +92,19 @@ verification. Where the host's terrain-only pre-shading leaves holes, the
 host keeps the nearest matching valid tap or recomputes at full resolution
 if all four taps lack terrain.
 
+**SI-GBUF-05**. The JP v208 `Main` configuration enables half-resolution,
+32-bit normalized linear depth and disables `depth_reduce` and
+`ssao_is_depth_full`. The perspective `render_buffer_depth` variant 24
+(PS binary 109 in `common.sharcb`) point-samples camera depth and emits
+half NLD. Field PS 128 reads half NLD for its SSAO taps. Its VS indexes
+the 4×4 rotation texture once per half-resolution pixel.
+
+The host computes these depth taps from the matching half-grid centres
+in Bevy's depth prepass. Half classification and pre-shading share those
+centres so they select the same material. The pre-shading position follows
+the half-pixel ray. The host evaluates AO directly in pre-shading with
+linear view metres and has no separate Expand target.
+
 The D16 classification identifies the field pixels for comparisons.
 Separate screenshots fix the sun and weather, while cloud shadows still
 advance with the runtime clock.

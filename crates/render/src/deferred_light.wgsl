@@ -286,20 +286,27 @@ fn local_lights(pbr: PbrInput, N: vec3<f32>, albedo: vec3<f32>, view_z: f32) -> 
 
 // --- The field: ambient occlusion (program 128) ---
 
-// The game's rotations (`ssao` of SystemModel.Tex2, 4×4, `2·v − 1` of red
-// and green): one per 4 game pixels, repeating.
-fn ssao_rotation(noise: texture_2d<f32>, frag: vec2<f32>) -> vec2<f32> {
+// The game's repeating rotations (`ssao` of SystemModel.Tex2, 4×4).
+fn ssao_rotation(noise: texture_2d<f32>, noise_coord: vec2<f32>) -> vec2<f32> {
     let size = vec2<i32>(textureDimensions(noise));
-    let game_pixel = frag * (GAME_LINES / view.viewport.w);
-    let texel = vec2<i32>(floor(game_pixel / 4.0)) % size;
+    let texel = vec2<i32>(floor(noise_coord)) % size;
     return textureLoad(noise, texel, 0).rg * 2.0 - 1.0;
+}
+
+fn ssao_sample_z(uv: vec2<f32>, half_size: vec2<f32>) -> f32 {
+    if half_size.x == 0.0 {
+        return scene_position(uv).z;
+    }
+    // SI-GBUF-05: reconstruct the point-sampled half-depth grid from Bevy's depth prepass.
+    let texel = clamp(floor(uv * half_size), vec2(0.0), half_size - 1.0);
+    return scene_position((texel + 0.5) / half_size).z;
 }
 
 // One direction's pair of samples, at `uv ± offset`: how much each is in
 // front of the point, `k` its scale per metre.
-fn ssao_pair(frame: Frame, z0: f32, offset: vec2<f32>, k: f32) -> f32 {
-    let dp = 0.995 * z0 + scene_position(frame.uv + offset).z;
-    let dm = 0.995 * z0 + scene_position(frame.uv - offset).z;
+fn ssao_pair(uv: vec2<f32>, biased_z: f32, offset: vec2<f32>, k: f32, half_size: vec2<f32>) -> f32 {
+    let dp = biased_z + ssao_sample_z(uv + offset, half_size);
+    let dm = biased_z + ssao_sample_z(uv - offset, half_size);
     let tp = saturate(k * dp + 0.5);
     let tm = saturate(k * dm + 0.5);
     let fp = saturate(1.0 - 0.8333333 * dp);
@@ -312,19 +319,28 @@ fn ssao_pair(frame: Frame, z0: f32, offset: vec2<f32>, k: f32) -> f32 {
 // The game's screen-space ambient occlusion at the pixel (1: open): four
 // depth samples in two directions turned by the noise, a fixed share of
 // the screen away.
-fn ssao(frame: Frame, noise: texture_2d<f32>, frag: vec2<f32>) -> f32 {
+fn ssao_on_grid(frame: Frame, noise: texture_2d<f32>, frag: vec2<f32>, half_size: vec2<f32>) -> f32 {
 #ifdef DEPTH_PREPASS
-    let r = ssao_rotation(noise, frag);
+    let use_half_depth = half_size.x > 0.0;
+    let forward_noise_coord = frag * (GAME_LINES / view.viewport.w) / 4.0;
+    let r = ssao_rotation(noise, select(forward_noise_coord, frame.uv * half_size, use_half_depth));
     let turn = mat2x2<f32>(r.x, r.y, -r.y, r.x);
     let aspect = vec2<f32>(view.viewport.w / view.viewport.z, 1.0);
     let a = turn * vec2<f32>(-0.0036606, 0.0364835) * aspect;
     let b = turn * vec2<f32>(0.0199001, 0.0019967) * aspect;
-    let z0 = -frame.p.z;
-    let open = 0.17764 * ssao_pair(frame, z0, a, 14.70871) + 0.254544 * ssao_pair(frame, z0, b, 10.9109);
+    // The original applies 0.995 to normalized depth, measured from the near plane.
+    let near_correction = select(0.0, 0.005 * view.clip_from_view[3][2], use_half_depth);
+    let biased_z = 0.995 * -frame.p.z + near_correction;
+    let open = 0.17764 * ssao_pair(frame.uv, biased_z, a, 14.70871, half_size)
+        + 0.254544 * ssao_pair(frame.uv, biased_z, b, 10.9109, half_size);
     return 1.0 - saturate((open - 0.4321855) * 6.0);
 #else
     return 1.0;
 #endif
+}
+
+fn ssao(frame: Frame, noise: texture_2d<f32>, frag: vec2<f32>) -> f32 {
+    return ssao_on_grid(frame, noise, frag, vec2(0.0));
 }
 
 // --- The field: pre-shading (programs 112, 108) and main pass (32, 28) ---

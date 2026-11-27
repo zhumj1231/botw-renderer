@@ -8,7 +8,7 @@
 #import botw::clouds::{CloudParams, cloud_shadow}
 #import botw::look::{read_look_at, sky_cover, field_wetness_at, haze_terms}
 #import botw::deferred_light::{
-    FieldSurface, Frame, MainLight, game_frame, scene_depth, ssao,
+    FieldSurface, Frame, MainLight, game_frame, scene_depth, ssao_on_grid,
     main_light_source, field_shadow, wet_field, sky_visibility, field_ambient_at, field_compose,
 }
 
@@ -36,8 +36,7 @@ struct FieldPixel {
 fn field_pixel(uv: vec2<f32>) -> FieldPixel {
     let size = vec2<f32>(textureDimensions(normals));
     let texel = clamp(vec2<i32>(uv * size), vec2(0), vec2<i32>(size) - vec2(1));
-    let center = (vec2<f32>(texel) + 0.5) / size;
-    let ndc = vec3(center.x * 2.0 - 1.0, 1.0 - 2.0 * center.y, max(scene_depth(center), 1e-6));
+    let ndc = vec3(uv.x * 2.0 - 1.0, 1.0 - 2.0 * uv.y, max(scene_depth(uv), 1e-6));
     let normal = textureLoad(normals, texel, 0);
     let material = textureLoad(albedo, texel, 0);
     let bits = u32(round(normal.a * 255.0));
@@ -49,7 +48,7 @@ fn field_pixel(uv: vec2<f32>) -> FieldPixel {
     surface.flag = f32(bits & 1u);
 
     var pbr = pbr_input_new();
-    pbr.frag_coord = vec4(vec2<f32>(texel) + 0.5, ndc.z, 1.0);
+    pbr.frag_coord = vec4(uv * size, ndc.z, 1.0);
     pbr.world_position = vec4(position_ndc_to_world(ndc), 1.0);
     pbr.V = normalize(view.world_position - pbr.world_position.xyz);
     // SI-GBUF-03: the G-buffer carries the mapped normal, which also biases Bevy's shadow query here.
@@ -58,7 +57,7 @@ fn field_pixel(uv: vec2<f32>) -> FieldPixel {
     pbr.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT;
     pbr.material.flags |= STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
     let guide = dot(normal.rgb, vec3(1.0 / 3.0));
-    return FieldPixel(pbr, game_frame(position_ndc_to_view(ndc), center), surface, guide);
+    return FieldPixel(pbr, game_frame(position_ndc_to_view(ndc), uv), surface, guide);
 }
 
 struct PreShading {
@@ -81,7 +80,7 @@ fn field_vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) cod
     return FieldVertexOutput(vec4(xy, f32(code) / 255.0, 1.0), uv);
 }
 
-fn shade_field(pixel: FieldPixel, light: MainLight) -> PreShading {
+fn shade_field(pixel: FieldPixel, light: MainLight, half_size: vec2<f32>) -> PreShading {
     let pbr = pixel.pbr;
     let point = pbr.world_position.xyz;
     let z = -pixel.frame.p.z;
@@ -92,7 +91,7 @@ fn shade_field(pixel: FieldPixel, light: MainLight) -> PreShading {
     let open = sky_visibility(cover, point.y, surface.N.y, surface.flag, z);
     var ao = 1.0;
     if z < 150.0 {
-        ao = ssao(pixel.frame, ssao_noise, pbr.frag_coord.xy);
+        ao = ssao_on_grid(pixel.frame, ssao_noise, pbr.frag_coord.xy, half_size);
     }
     let shade = 1.0 - cloud_shadow(cloud_shadow_map, cloud_shadow_sampler, clouds, point);
     let sun = field_shadow(light, pbr, pixel.frame.p.z, shade, surface.translucent);
@@ -104,7 +103,9 @@ fn shade_field(pixel: FieldPixel, light: MainLight) -> PreShading {
 
 @fragment
 fn preshade(in: FieldVertexOutput) -> PreShading {
-    return shade_field(field_pixel(in.uv), main_light_source());
+    let half_size = vec2<f32>(max(textureDimensions(normals) / 2u, vec2(1u)));
+    let uv = in.position.xy / half_size;
+    return shade_field(field_pixel(uv), main_light_source(), half_size);
 }
 
 fn reconstruction_weights(pixel: FieldPixel, center: vec2<f32>, taps: array<vec2<i32>, 4>) -> vec4<f32> {
@@ -177,7 +178,7 @@ fn compose(in: FieldVertexOutput) -> @location(0) vec4<f32> {
             diffuse += weights[i] * textureLoad(half_diffuse, at, 0).rgb;
         }
     } else {
-        let full = shade_field(pixel, light);
+        let full = shade_field(pixel, light, vec2(0.0));
         shadow = full.shadow;
         fog = full.fog.rgb;
         diffuse = full.diffuse.rgb;
