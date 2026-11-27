@@ -107,8 +107,9 @@ with the event map as a reference for matching pipeline state.
    Use the same capture to check the AO silhouette and the reconstructed
    ambient output. Compare `guide_texel` to original EID 12855 across the
    same material boundaries.
-2. **Measure outdoor ambient and atmosphere.** Read the clear-day
-   LightAnalyzer, exposure, sky and fog inputs from the archived frame.
+2. **Measure outdoor ambient and atmosphere.** The clear-day
+   [LightAnalyzer readback](docs/research/wiiu-character-shading.md#clear-day-lightanalyzer-readback-in-frame-3830)
+   is verified. Read sky, fog and final display exposure from the archived frame.
    Compare a matched clear night and a matched rainy daytime view when
    new captures are available. Use Hebra snowfall for the precipitation
    draw and cold-region terrain.

@@ -182,6 +182,33 @@ classified separately at full resolution. The table gives the shader
 writes selected by those material states. The original frame still
 provides the scene-specific coverage and resource values.
 
+#### Clear-day LightAnalyzer readback in frame 3830
+
+In [the zero-pack Wii U JP v208 replay](wiiu-deferred-shading.md#hateno-terrain-buffer-diagnostic),
+EID 10828 reads the 64×64 HDR cube (resource 12264) and writes the active
+1×1 cube summary with RGB `(0.28515625, 0.265625, 0.12890625)`.
+EID 10839 reads the 640×360 Expand snapshot (resource 12635), with
+`cAnalyzeScale = 0.8`. Active viewport sizes at EIDs 10839, 10850,
+10864, 10874, 10888 and 10903 are 64×45, 32×23, 16×12, 8×6, 4×3 and
+2×2. The intermediate targets are R16F. The final forced-shadow
+multiplier is 1 in this draw.
+
+At EID 10918, PS2 reads the final 2×2 R16F input (resource 12699).
+Decoded by row, the values are `[0.97021484375, 0.5703125]` and
+`[0.93603515625, 0.876953125]`. The fragment program samples at the
+center, giving 0.83837890625 from the four equally weighted texels.
+The main-light alpha multiplier in remapped PS constant 0.w is 1.
+The expected first analyzer texel after R11G11B10F quantization is
+`(0.8359375, 1, 1)`, which matches the render target and the 12×1
+`gsys_user4` view (resource 12404) bound to the EID 11011 vertex shader.
+Its texels 4 and 5 read `(1.375, 1.296875, 0.484375)` and
+`(0.59375, 0.484375, 0.15625)`.
+
+This validates the named `cExposure` input to the ambient analyzer.
+Final display exposure remains a separate path. One frame establishes
+this view's data flow and values. Cube placement, temporal updates and
+behavior in other weather and light conditions require additional views.
+
 The native `uking_tree` pixel variants 7 and 11 both write raw material
 ID 7 after their alpha test. The class mask maps either variant to 6,
 which selects the foliage Expand draw. The analyzer then samples those
