@@ -707,3 +707,21 @@ back to the resource archive and test which wind and spawn controls
 it actually uses. Use the CEDEC 2017 effects abstract for the team's
 design context and the captured draw for implementation evidence.
 [Official CEDEC abstract](https://cedec.cesa.or.jp/2017/session/VA/s58eed8209ffce.html)
+
+## Rain impacts on the ground
+
+Open research item 7. A second user recording and an annotated image
+show small bright rain impacts extending along sloping ground while
+airborne rain streaks are visible. The exact emitter and render pass
+are open. The existing [rain research](weather.md#65-puddles-ripples-drops-on-the-screen)
+identifies camera-driven rain and the terrain wetness channel. The
+actor/AI rain-splash parameter is a lead whose connection to this
+field effect still needs evidence.
+
+Use a fixed camera and adjacent rainy frames. Pick impact pixels
+on the marked slope and find their draw or depth-aware composite.
+Check whether spawn positions come from world geometry, a ground
+height buffer or a camera-relative emitter. Trace normals, depth
+tests, texture animation, lifetime, blend mode and surface masks.
+Compare exposed slopes with sheltered ground and water to resolve
+which receivers participate. Keep recordings and captures local.
