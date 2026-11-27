@@ -262,8 +262,8 @@ The else block writes 1 to Expand blue. Since `e53.z` is the current
 shadow range minus 20 m, AO stays active through the fade band and ends
 at the current outer range.
 
-In the v208 `Main` profile, `depth_reduce` and `ssao_is_depth_full` are
-disabled. `NLD(half)` comes from `render_buffer_depth` variant 24 in
+The v208 `Main` profile disables `depth_reduce`.
+`NLD(half)` comes from `render_buffer_depth` variant 24 in
 `common.sharcb`. In PS 109, the only texture operation point-samples
 `cDepth` at the half-grid pixel center. If that value is `d`, the pass
 writes `d` to half hardware depth and `a / (1 − d * b) − a` to R32F
