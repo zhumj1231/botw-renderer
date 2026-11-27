@@ -49,7 +49,8 @@ const LOOK_MASK_REDUCE: f32 = 8.0;
 // The look texture unpacked, in sections of four texels, each owned by one
 // wave-3 track (see `Look` in look.rs for what each texel holds):
 struct Look {
-    // Texels 0–3, light: [0].x diffuse gain, [0].y main-light change ratio.
+    // Texels 0–3, light: [0].x diffuse gain, [0].y main-light change ratio,
+    // [0].z analyzer shadow ratio.
     light: array<vec4<f32>, 4>,
     // Texels 4–7, air (see `apply_haze` and `fog.rs`): [4].rgb haze colour
     // after exposure, [4].a its share far away (0: no haze); [5].x one over
@@ -95,7 +96,7 @@ struct Look {
 // that is not a look texture (e.g. a material made without one).
 fn identity_look() -> Look {
     var look: Look;
-    look.light[0] = vec4<f32>(1.0, 1.0, 0.0, 0.0);
+    look.light[0] = vec4<f32>(1.0, 1.0, 1.0, 0.0);
     look.light[1] = vec4<f32>(0.0);
     look.light[2] = vec4<f32>(0.0);
     look.light[3] = vec4<f32>(0.0);

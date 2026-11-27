@@ -634,6 +634,7 @@ pub struct Weather {
     /// The climate's weather this frame (`0x03672890`): what is wanted,
     /// before it is taken.
     pub wanted: usize,
+    shadow_fade: f32,
     forced: Option<usize>,
     /// The weather has been placed for the scene (the first is taken as it
     /// is; afterwards new ones blow in).
@@ -651,6 +652,7 @@ impl Weather {
     pub fn settled(weather: usize) -> Self {
         let mut weights = [0.0; WEATHERS.len()];
         weights[weather] = 1.0;
+        let cloudiness = cloudiness_target(weather);
         Self {
             current: weather,
             weights,
@@ -659,8 +661,9 @@ impl Weather {
             previous: weather,
             transition: 1.0,
             sky: SkyState::settled(weather),
-            cloudiness: cloudiness_target(weather),
+            cloudiness,
             wanted: weather,
+            shadow_fade: shadow_fade_target(weather, cloudiness),
             forced: None,
             settled: false,
         }
@@ -712,7 +715,18 @@ impl Weather {
             let step = CLOUDINESS_STEP * frames;
             chase(self.cloudiness, target, 0.0, frames, 0.2 * step, step)
         };
+        // SkyMgr +0x2174 follows the wanted weather and the current cloudiness.
+        let target = shadow_fade_target(wanted, self.cloudiness);
+        self.shadow_fade = if self.forced.is_some() || snap {
+            target
+        } else {
+            chase(self.shadow_fade, target, 0.99, frames, 0.0001 * frames, 0.001 * frames)
+        };
         self.sky.step(self.arriving, self.cloudiness, frames, snap);
+    }
+
+    pub(crate) fn analyzer_shadow_ratio(&self, flash: f32) -> f32 {
+        1.0 - self.shadow_fade * (1.0 - flash)
     }
 
     /// Keeps weather `forced` (an index into `WEATHERS`) everywhere, or lets
@@ -767,6 +781,15 @@ fn cloudiness_target(weather: usize) -> f32 {
         0.0
     } else {
         1.0
+    }
+}
+
+fn shadow_fade_target(wanted: usize, cloudiness: f32) -> f32 {
+    cloudiness * match wanted {
+        RAIN | SNOW | THUNDER_RAIN => 0.8,
+        HEAVY_RAIN | HEAVY_SNOW => 1.0,
+        THUNDERSTORM => 0.0,
+        _ => 0.4,
     }
 }
 
@@ -988,6 +1011,9 @@ pub(crate) fn forecast(
         || next.previous != weather.previous
         || next.settled != weather.settled
         || next.wanted != weather.wanted
+        || next.cloudiness != weather.cloudiness
+        || next.shadow_fade != weather.shadow_fade
+        || next.sky != weather.sky
         || (next.transition - weather.transition).abs() > 1e-6
         || match (next.temperature, weather.temperature) {
             (Some(a), Some(b)) => (a - b).abs() > 0.05,
@@ -1153,6 +1179,20 @@ fn chase_bloom(value: f32, target: f32, frames: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn analyzer_shadow_ratio_follows_the_wanted_weather() {
+        assert_eq!(Weather::settled(CLEAR).analyzer_shadow_ratio(0.0), 1.0);
+        let mut cloudy = Weather::settled(CLOUDY);
+        assert_eq!(cloudy.analyzer_shadow_ratio(0.0), 0.6);
+        assert_eq!(cloudy.analyzer_shadow_ratio(1.0), 1.0);
+        cloudy.step(CLOUDY, 1.0, false);
+        cloudy.step(RAIN, 1.0, false);
+        assert_eq!(cloudy.transition, 0.0);
+        assert_eq!(cloudy.shadow_fade, 0.401);
+        cloudy.step(HEAVY_RAIN, 1.0, true);
+        assert_eq!(cloudy.analyzer_shadow_ratio(0.0), 0.0);
+    }
 
     #[test]
     fn weather_rolls_like_the_game() {

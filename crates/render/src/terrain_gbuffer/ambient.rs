@@ -50,10 +50,11 @@ pub(super) fn allocate_reduction(
 
 #[derive(Resource)]
 pub(super) struct LightAnalyzerPipelines {
-    reduce_layout: BindGroupLayoutDescriptor,
-    resolve_layout: BindGroupLayoutDescriptor,
-    reduce_first: CachedRenderPipelineId,
-    reduce: CachedRenderPipelineId,
+    layout: BindGroupLayoutDescriptor,
+    first: CachedRenderPipelineId,
+    middle: CachedRenderPipelineId,
+    last: CachedRenderPipelineId,
+    only: CachedRenderPipelineId,
     resolve: CachedRenderPipelineId,
     sampler: Sampler,
 }
@@ -64,24 +65,18 @@ fn init_pipelines(
     cache: Res<PipelineCache>,
     fullscreen: Res<FullscreenShader>,
 ) {
-    let source = || texture_2d(TextureSampleType::Float { filterable: true });
-    let filtering = || sampler(SamplerBindingType::Filtering);
-    let reduce_layout = BindGroupLayoutDescriptor::new(
-        "light_analyzer_reduce",
-        &BindGroupLayoutEntries::sequential(ShaderStages::FRAGMENT, (source(), filtering())),
-    );
-    let resolve_layout = BindGroupLayoutDescriptor::new(
-        "light_analyzer_resolve",
+    let layout = BindGroupLayoutDescriptor::new(
+        "light_analyzer",
         &BindGroupLayoutEntries::sequential(
             ShaderStages::FRAGMENT,
             (
-                source(),
-                filtering(),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
                 texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         ),
     );
-    let pipeline = |name: &'static str, layout: &BindGroupLayoutDescriptor, color_target, shader_defs| {
+    let pipeline = |name: &'static str, entry: &'static str, color_target, shader_defs| {
         cache.queue_render_pipeline(RenderPipelineDescriptor {
             label: Some(format!("light_analyzer_{name}").into()),
             layout: vec![layout.clone()],
@@ -89,26 +84,23 @@ fn init_pipelines(
             fragment: Some(FragmentState {
                 shader: SHADER,
                 shader_defs,
-                entry_point: Some(name.into()),
+                entry_point: Some(entry.into()),
                 targets: vec![color_target],
                 ..default()
             }),
             ..default()
         })
     };
-    let reduce_first = pipeline(
-        "reduce_first",
-        &reduce_layout,
-        target(REDUCTION_FORMAT),
-        vec![ShaderDefVal::UInt(
-            "ANALYZE_WIDTH_PERCENT".into(),
-            ANALYZE_WIDTH_PERCENT,
-        )],
-    );
-    let reduce = pipeline("reduce", &reduce_layout, target(REDUCTION_FORMAT), vec![]);
+    let crop = ShaderDefVal::UInt("ANALYZE_WIDTH_PERCENT".into(), ANALYZE_WIDTH_PERCENT);
+    let weather = ShaderDefVal::Bool("FINAL_REDUCTION".into(), true);
+    let reduce = |name, defs| pipeline(name, "reduce", target(REDUCTION_FORMAT), defs);
+    let first = reduce("reduce_first", vec![crop.clone()]);
+    let middle = reduce("reduce", vec![]);
+    let last = reduce("reduce_last", vec![weather.clone()]);
+    let only = reduce("reduce_only", vec![crop, weather]);
     let resolve = pipeline(
         "resolve",
-        &resolve_layout,
+        "resolve",
         Some(ColorTargetState {
             format: CUBE_MEAN_FORMAT,
             blend: None,
@@ -117,10 +109,11 @@ fn init_pipelines(
         vec![],
     );
     commands.insert_resource(LightAnalyzerPipelines {
-        reduce_layout,
-        resolve_layout,
-        reduce_first,
-        reduce,
+        layout,
+        first,
+        middle,
+        last,
+        only,
         resolve,
         sampler: device.create_sampler(&SamplerDescriptor {
             label: Some("light_analyzer_linear"),
@@ -132,10 +125,8 @@ fn init_pipelines(
 }
 
 pub(super) struct LightAnalysis {
-    reduce_first: RenderPipeline,
-    reduce: RenderPipeline,
     resolve: RenderPipeline,
-    levels: Vec<BindGroup>,
+    levels: Vec<(RenderPipeline, BindGroup)>,
     resolve_inputs: BindGroup,
     means: TextureView,
 }
@@ -150,33 +141,38 @@ impl LightAnalyzerPipelines {
         look: &TextureView,
         means: &TextureView,
     ) -> Option<LightAnalysis> {
-        let reduce_first = cache.get_render_pipeline(self.reduce_first)?.clone();
-        let reduce = cache.get_render_pipeline(self.reduce)?.clone();
         let resolve = cache.get_render_pipeline(self.resolve)?.clone();
-        let layout = cache.get_bind_group_layout(&self.reduce_layout);
+        let layout = cache.get_bind_group_layout(&self.layout);
         let mut source = expand;
-        let levels = levels
+        let length = levels.len();
+        let reductions = levels
             .iter()
-            .map(|level| {
+            .enumerate()
+            .map(|(index, level)| {
+                let id = match (index == 0, index + 1 == length) {
+                    (true, true) => self.only,
+                    (true, false) => self.first,
+                    (false, true) => self.last,
+                    (false, false) => self.middle,
+                };
+                let pipeline = cache.get_render_pipeline(id)?.clone();
                 let group = device.create_bind_group(
                     "light_analyzer_reduce",
                     &layout,
-                    &BindGroupEntries::sequential((source, &self.sampler)),
+                    &BindGroupEntries::sequential((source, &self.sampler, look)),
                 );
                 source = &level.default_view;
-                group
+                Some((pipeline, group))
             })
-            .collect();
+            .collect::<Option<Vec<_>>>()?;
         let resolve_inputs = device.create_bind_group(
             "light_analyzer_resolve",
-            &cache.get_bind_group_layout(&self.resolve_layout),
+            &layout,
             &BindGroupEntries::sequential((source, &self.sampler, look)),
         );
         Some(LightAnalysis {
-            reduce_first,
-            reduce,
             resolve,
-            levels,
+            levels: reductions,
             resolve_inputs,
             means: means.clone(),
         })
@@ -185,13 +181,13 @@ impl LightAnalyzerPipelines {
 
 impl LightAnalysis {
     pub(super) fn draw(&self, render: &mut RenderContext, levels: &[CachedTexture]) {
-        for (index, (level, inputs)) in levels.iter().zip(&self.levels).enumerate() {
+        for (level, (pipeline, inputs)) in levels.iter().zip(&self.levels) {
             let mut pass = render.begin_tracked_render_pass(RenderPassDescriptor {
                 label: Some("light analyzer reduce"),
                 color_attachments: &[color(&level.default_view)],
                 ..default()
             });
-            pass.set_render_pipeline(if index == 0 { &self.reduce_first } else { &self.reduce });
+            pass.set_render_pipeline(pipeline);
             pass.set_bind_group(0, inputs, &[]);
             pass.draw(0..3, 0..1);
         }

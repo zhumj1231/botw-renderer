@@ -974,9 +974,17 @@ pub fn update_sky_state(
     *sky = now;
 }
 
-fn update_light_look(sky: Res<Sky>, mut look: ResMut<crate::look::Look>) {
+fn update_light_look(
+    sky: Res<Sky>,
+    weather: Option<Res<Weather>>,
+    mut look: ResMut<crate::look::Look>,
+) {
     if look.main_light_change != sky.light_change {
         look.main_light_change = sky.light_change;
+    }
+    let shadow_ratio = weather.map_or(1.0, |weather| weather.analyzer_shadow_ratio(sky.flash));
+    if look.analyzer_shadow_ratio != shadow_ratio {
+        look.analyzer_shadow_ratio = shadow_ratio;
     }
 }
 

@@ -211,7 +211,11 @@ For positive frame factor `dt`, the chase uses
 The update also assigns the target immediately when the world flag at
 `+0x53c` is set. A settled stock cloudy state with cloudiness 1 and no
 flash gives a final reduction multiplier of 0.6. The independent reducer
-still uses 1 for this multiplier.
+uploads this multiplier from the weather update and applies it during the
+final 2×2 reduction. It preserves its coverage weight in alpha while scaling
+visibility. The independent renderer initializes settled and forced weather
+to their target values for reproducible captures. It uses the native chase
+for ordinary transitions.
 
 ```text
 e     = (cExposure·main.w)³,  avg = luma(cCubeMap2D)
