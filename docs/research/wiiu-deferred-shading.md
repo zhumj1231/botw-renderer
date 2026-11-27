@@ -50,10 +50,11 @@ behavior.
 
 ## Experimental terrain lighting
 
-Capture both modes with the same Hateno preset, time and weather:
+Capture both modes with the same Hateno preset, time, weather and
+1280×720 resolution recorded for the Wii U reference:
 
-    cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesky --screenshot captures/terrain-forward.png
-    cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesky --terrain-deferred --screenshot captures/terrain-deferred.png
+    cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesky --resolution 1280x720 --screenshot captures/terrain-forward.png
+    cargo render --assets assets-hateno --place hateno --time 10:00 --weather bluesky --resolution 1280x720 --terrain-deferred --screenshot captures/terrain-deferred.png
 
 After the geometry pass, the D16 half-resolution classification selects
 field pixels for pre-shading. It computes shadow (sun and cloud attenuation,

@@ -79,6 +79,7 @@ usage: render [options]
                    heavyrain, snow, heavysnow, thunderstorm, thunderrain
   --hidpi          render at the display's full resolution (Retina: 4x
                    the pixels); default renders 1600x900 pixels
+  --resolution <WxH>  set an exact render size in pixels, overriding --hidpi
   --no-vsync       disable display sync and background update throttling
   --occlusion-culling  skip meshes hidden behind opaque geometry (experimental)
   --profile        log frame/pass timings and scene counts every 10 seconds
@@ -112,6 +113,7 @@ struct Args {
     time: Option<f32>,
     /// Weather to keep everywhere (index into `env::WEATHERS`).
     weather: Option<usize>,
+    resolution: Option<(u32, u32)>,
     hidpi: bool,
     no_vsync: bool,
     occlusion_culling: bool,
@@ -131,6 +133,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         camera: None,
         time: None,
         weather: None,
+        resolution: None,
         hidpi: false,
         no_vsync: false,
         occlusion_culling: false,
@@ -167,6 +170,7 @@ fn parse_args() -> Result<Option<Args>, String> {
                     .position(|w| w.eq_ignore_ascii_case(&name));
                 args.weather = Some(found.ok_or_else(|| format!("unknown weather {name}"))?);
             }
+            "--resolution" => args.resolution = Some(parse_resolution(&value()?)?),
             "--hidpi" => args.hidpi = true,
             "--no-vsync" => args.no_vsync = true,
             "--occlusion-culling" => args.occlusion_culling = true,
@@ -186,6 +190,17 @@ fn parse_args() -> Result<Option<Args>, String> {
         .canonicalize()
         .map_err(|e| format!("{}: {e} (run `cargo bake` first)", args.assets.display()))?;
     Ok(Some(args))
+}
+
+fn parse_resolution(text: &str) -> Result<(u32, u32), String> {
+    let invalid = || format!("--resolution needs positive WxH dimensions, got {text}");
+    let (width, height) = text.split_once(['x', 'X']).ok_or_else(invalid)?;
+    let width = parse_number(width).map_err(|_| invalid())?;
+    let height = parse_number(height).map_err(|_| invalid())?;
+    if width == 0 || height == 0 {
+        return Err(invalid());
+    }
+    Ok((width, height))
 }
 
 /// `HH:MM` (or `HH`) as hours.
@@ -281,8 +296,9 @@ fn main() -> AppExit {
         .collect();
 
     // SI-RUN-01: window 1600x900 (the game renders 1280x720).
-    let mut resolution = WindowResolution::new(1600, 900);
-    if !args.hidpi {
+    let (width, height) = args.resolution.unwrap_or((1600, 900));
+    let mut resolution = WindowResolution::new(width, height);
+    if args.resolution.is_some() || !args.hidpi {
         resolution = resolution.with_scale_factor_override(1.0);
     }
     // Screenshots show the time they were asked for.
