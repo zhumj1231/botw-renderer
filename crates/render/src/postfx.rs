@@ -42,6 +42,8 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
 use crate::daynight::{Environment, Sky};
 
+mod overlay;
+
 const SHADER: Handle<Shader> = uuid_handle!("5b0e8c3a-2f47-4d19-9a6e-71c4d2e8b035");
 
 /// The format of the bloom's levels (internal format `0x1a`: GX2
@@ -71,6 +73,7 @@ pub struct PostFxPlugin;
 impl Plugin for PostFxPlugin {
     fn build(&self, app: &mut App) {
         load_internal_asset!(app, SHADER, "postfx.wgsl", Shader::from_wgsl);
+        overlay::register_shader(app);
         app.insert_resource(ToneChoice::from_env())
             .add_plugins((
                 ExtractComponentPlugin::<PostFx>::default(),
@@ -81,6 +84,7 @@ impl Plugin for PostFxPlugin {
             return;
         };
         render_app
+            .add_systems(RenderStartup, overlay::init)
             .add_systems(RenderStartup, init_pipelines)
             .add_systems(
                 Render,
@@ -459,6 +463,7 @@ fn game_postfx(
     pipelines: Res<PostFxPipelines>,
     pipeline_cache: Res<PipelineCache>,
     uniforms: Res<ComponentUniforms<PostFx>>,
+    overlay: Option<Res<overlay::OverlayReplay>>,
     mut ctx: RenderContext,
 ) {
     let (target, settings, uniform_index, levels) = view.into_inner();
@@ -492,12 +497,16 @@ fn game_postfx(
     let bloom_on = settings.correction.z > 0.5;
     let encoder = ctx.command_encoder();
     encoder.push_debug_group("game_postfx");
+    let scene = overlay
+        .as_deref()
+        .and_then(|overlay| overlay.draw(encoder, &pipeline_cache, target.main_texture().size()))
+        .unwrap_or(post_process.source);
     let bloom = match levels {
         Some(levels) if bloom_on => {
             let view = |t: &CachedTexture| t.default_view.clone();
             let lv: Vec<TextureView> = levels.levels.iter().map(view).collect();
             let sc: Vec<TextureView> = levels.scratch.iter().map(view).collect();
-            let source = single(post_process.source);
+            let source = single(scene);
             draw(encoder, "bloom_mask", &lv[0], (mask, &source, offset), None);
             for i in 0..LEVELS {
                 let (level, halved, across) = (single(&lv[i]), single(&lv[i + 1]), single(&sc[i]));
@@ -540,16 +549,11 @@ fn game_postfx(
         _ => None,
     };
     // Without a bloom the shader skips the texture; bind the frame there.
-    let bloom_view = bloom.as_ref().unwrap_or(post_process.source);
+    let bloom_view = bloom.as_ref().unwrap_or(scene);
     let compose_group = device.create_bind_group(
         "postfx_compose",
         &pipeline_cache.get_bind_group_layout(&pipelines.compose),
-        &BindGroupEntries::sequential((
-            post_process.source,
-            &pipelines.sampler,
-            uniform.clone(),
-            bloom_view,
-        )),
+        &BindGroupEntries::sequential((scene, &pipelines.sampler, uniform.clone(), bloom_view)),
     );
     let pass = (hdr_compose, &compose_group, offset);
     draw(encoder, "hdr_compose", post_process.destination, pass, None);

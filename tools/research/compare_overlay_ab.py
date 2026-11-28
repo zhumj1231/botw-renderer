@@ -32,6 +32,10 @@ depth=[row[0] for row in pixels("depth-full","<e")]
 guide=[row[0] for row in pixels("depth-half","<f")]
 post=pixels("effect-post","<4e")
 pre=pixels("effect-pre","<4e")[:640*360]
+gpu=pixels("gpu","<4e") if "--gpu" in sys.argv[2:] else None
+if gpu is not None:
+    assert len(gpu)==len(actual)
+gpu_errors={}
 b,scale=meta["constants"][0][0],meta["constants"][1][3]
 stats={label:[0,0.0,0.0,0.0,0.0,0.0,0.0,0] for label in ("all","sky","surface","sky_geometry_edge","far_slope_box")}
 sample={}
@@ -81,6 +85,19 @@ for y in range(720):
             edge_bilinear_error+=sum(abs(quantize(f,n)-a) for f,n,a in zip(unguided,(6,6,5),actual[k]))/3
         if 848<=x<=894 and 64<=y<=83 and z<1:
             groups.append("far_slope_box")
+        if gpu is not None:
+            raw_error=tuple(abs(f-a) for f,a in zip(gpu[k],final))
+            # Compare to the native target after mapping the renderer's RGBA16F to R11G11B10F.
+            gpu_quant=tuple(quantize(f,n) for f,n in zip(gpu[k],(6,6,5)))
+            native_error=tuple(abs(f-a) for f,a in zip(gpu_quant,actual[k]))
+            for g in groups:
+                a=gpu_errors.setdefault(g,[0,0.0,0.0,0.0,0.0,0])
+                a[0]+=1
+                a[1]+=sum(raw_error)/3
+                a[2]=max(a[2],max(raw_error))
+                a[3]+=sum(native_error)/3
+                a[4]=max(a[4],max(native_error))
+                a[5]+=gpu_quant==actual[k]
         ee=sum(map(abs,err))/3
         dd=sum(map(abs,delta))/3
         if max(map(abs,err)) > worst[0]: worst=(max(map(abs,err)),(x,y,base,quant,actual[k],z,ds))
@@ -99,6 +116,12 @@ report={g:dict(pixels=a[0], error_mean=a[1]/a[0],error_max=a[2],delta_mean=a[3]/
                delta_rgb=[s/a[0] for s in a[4:7]],exact_rgb=a[7]/float(a[0])) for g,a in stats.items() if a[0]}
 report["samples"]=sample
 report["worst"]=worst
+if gpu_errors:
+    report["gpu"]={
+        g:dict(pixels=a[0],mean_vs_unquantized_cpu=a[1]/a[0],max_vs_unquantized_cpu=a[2],
+               mean_vs_native=a[3]/a[0],max_vs_native=a[4],exact_native_rgb=a[5]/float(a[0]))
+        for g,a in gpu_errors.items()
+    }
 if stats["sky_geometry_edge"][0]:
     report["sky_geometry_edge"]["bilinear_error_mean"]=edge_bilinear_error/stats["sky_geometry_edge"][0]
 print(json.dumps(report,indent=2))

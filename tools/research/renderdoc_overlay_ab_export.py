@@ -2,15 +2,45 @@ import json, os, struct, sys, traceback
 from pathlib import Path
 import renderdoc as rd
 
+def walk(actions):
+    for action in actions:
+        yield action
+        yield from walk(action.children)
+
+def dump_renderer(c, out):
+    textures = {t.resourceId: t for t in c.GetTextures()}
+    stage = rd.ShaderStage.Pixel
+    for action in reversed(list(walk(c.GetRootActions()))):
+        if not (action.flags & rd.ActionFlags.Drawcall) or action.numIndices != 3:
+            continue
+        c.SetFrameEvent(action.eventId, False)
+        pipe = c.GetPipelineState()
+        shader = pipe.GetShaderReflection(stage)
+        if not shader or shader.entryPoint != "composite_overlay":
+            continue
+        tex = textures[pipe.GetOutputTargets()[0].resource]
+        assert (tex.width, tex.height, tex.format.Name()) == (1280, 720, "R16G16B16A16_FLOAT")
+        c.SetFrameEvent(action.eventId, True)
+        data = bytes(c.GetTextureData(tex.resourceId, rd.Subresource(0, 0, 0)))
+        assert len(data) == 1280 * 720 * 8
+        (out / "overlay-ab-gpu.bin").write_bytes(data)
+        return action.eventId
+    raise RuntimeError("Renderer capture has no composite_overlay draw")
+
 out = Path(os.environ["BOTW_FOG_OUT"])
 with (out / "overlay-ab-export.log").open("w",encoding="utf-8",buffering=1) as log:
     sys.stdout=sys.stderr=log
     cap=rd.OpenCaptureFile()
     c=None
     try:
-        assert cap.OpenFile(os.environ["BOTW_FOG_ORIGINAL"],"",None)==rd.ResultCode.Succeeded
+        renderer = os.environ.get("BOTW_OVERLAY_RENDERER_CAPTURE")
+        path = renderer or os.environ["BOTW_FOG_ORIGINAL"]
+        assert cap.OpenFile(path,"",None)==rd.ResultCode.Succeeded
         status,c=cap.OpenCapture(rd.ReplayOptions(),None)
         assert status==rd.ResultCode.Succeeded,status
+        if renderer:
+            print("Exported renderer HDR at E%d" % dump_renderer(c, out))
+            sys.exit(0)
         textures={str(t.resourceId):t for t in c.GetTextures()}
         def dump(eid, rid, label):
             c.SetFrameEvent(eid,True)

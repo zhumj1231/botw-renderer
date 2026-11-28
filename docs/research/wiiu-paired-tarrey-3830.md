@@ -354,5 +354,35 @@ Use the full-frame comparison as the checkpoint for integrating the HDR
 composite. The mask asset, mesh producer and frame-to-frame inputs still
 need identification.
 
+### Renderer Vulkan replay of E13778
+
+At 1280×720, set `BOTW_OVERLAY_REPLAY` to the directory produced by the
+original-frame exporter. The renderer uploads the original pre-composite
+HDR, half-resolution effect and both depth guides. The WGSL
+`composite_overlay` pass runs before the renderer's bloom mask and
+supplies the same HDR image to the tone pipeline. This is a fixture mode
+for validating the math, including the sampler and color format. A normal
+run uses the renderer's own HDR inputs.
+
+Capture the renderer with `renderdoccmd capture -w -c <path>` and the
+paired command above, adding `--renderdoc`. Set
+`BOTW_OVERLAY_RENDERER_CAPTURE` to the renderer capture and reuse the
+RenderDoc exporter. Pass `--gpu` to the comparison script to include the
+renderer readback.
+
+The Vulkan replay drew `composite_overlay` at E28104 and wrote RGBA16F.
+Against the unquantized CPU calculation, its full-frame RGB mean
+absolute error is 0.0000879 per channel. After truncation to the capture's
+R11G11B10F format, mean error versus the game is 0.0001277 with exact RGB
+on 91.09% of pixels. In the 3,476 sky/geometry edge samples, mean
+error is 0.0001446, with exact RGB on 93.21%. The largest absolute
+full-frame error is 0.5. A default-mode 640×360
+Vulkan screenshot verified that the original viewer path still runs.
+
+A live scene needs the two E13778 depth guides and the half-resolution
+effect buffer produced by the renderer. Identify the source of E13765's
+160×90 mask and indexed geometry, then validate their outputs separately
+from this composite.
+
 A separate forward-mode Vulkan screenshot at 640×360 verified that
 materials still render when shared pre-shading is unavailable.

@@ -111,10 +111,13 @@ snapshot. The far-slope shadow fix and the cascade split A/B are
 verified in the paired camera. The object material now consumes the
 pre-shaded sun term. Frame 3830 establishes the E13765 geometry draw,
 its 160×90 mask input, and the depth-guided E13778 HDR composite. The
-full-frame CPU comparison and E13765 A/B are verified. Use those readbacks
-to validate a renderer-side HDR composite, then identify the mask and
-geometry producers. The same-input display curve is verified at the
-sampled points. The weather replays are additional validation scenes.
+full-frame CPU comparison and E13765 A/B are verified. The renderer-side
+HDR composite is also verified on Vulkan in `BOTW_OVERLAY_REPLAY` mode
+with the four original inputs. For live rendering, trace the 160×90 mask
+draws, identify the E13765 geometry source, and compare the generated
+effect buffer before enabling the composite on normal scene inputs.
+The same-input display curve is verified at the sampled points.
+The weather replays are additional validation scenes.
 
 1. **Close the outdoor clear-day baseline.** Use frame 3830 for the
    [terrain shadow and SSAO readbacks](docs/research/wiiu-deferred-shading.md#clear-day-terrain-expand-at-eid-9949).
