@@ -288,5 +288,34 @@ buffer clear, approximately (0.0843, 0.0894, 0.0349, 0.9629).
 The visually significant pass is thus outside the opaque field
 formula. Its originating effect or emitter is still open.
 
+### E13765 effect geometry and mask
+
+Replay of the original Wii U frame confirms the following resource chain
+in Cemu Vulkan. The image extents describe replay resources, which include
+padding in the source attachment.
+
+| Events | Draw or copy | Observed result |
+| --- | --- | --- |
+| E10797–E10819 | Mask draws sample a 512×512 BC4_UNORM texture. The first and last draws in this range each submit 144 indices and use source-alpha RGB blending. | A 160×90 viewport writes into R16F attachment 12571, whose allocation is 192×96. |
+| E13751 | Copy from 12571. | Sampled R16F resource 12607 is 160×90. |
+| E13765 | 480 indices, triangle list, one instance, with depth testing disabled. The fragment shader samples only resource 12607. | RGBA16F attachment 20013 changes at 188,826 texels, with an inclusive affected rectangle of (0, 0) to (639, 323). The attachment is 640×368. |
+| E13769 and E13778 | Copy to a 640×360 sampled RGBA16F image, then use a full-screen triangle to composite into 1280×720 HDR. | The fragment shader samples full-resolution R16F and half-resolution R32F depth to guide reconstruction. |
+
+E13765 uses projected mask UV `Sem3.xy / Sem3.w`. Its fragment RGB is
+`Sem0.rgb × Sem7.w × cb0.rgb × cb0.w`. Its source alpha is
+`Sem4.x × saturate(Sem0.w × Sem7.w) × saturate(mask.r × 0.5)`,
+subject to the shader's alpha test. The blend writes
+`RGB = src.rgb × src.a + dst.rgb × (1 − src.a)` and
+`A = dst.a × (1 − src.a)`. E13778 then uses `src.rgb + dst.rgb × src.a`.
+The effect buffer alpha therefore carries the surviving fraction of scene
+HDR through those blends. A constant fog color would discard the observed
+variation from the earlier mask and mesh draws.
+
+To isolate reconstruction error, use the captured effect buffer, its two
+depth guides and the pre-composite HDR as inputs, and compare the result
+against E13778. For an A/B of this particular draw, repeat with the effect
+buffer sampled immediately before E13765. The mask asset, the mesh
+producer, and their frame-to-frame inputs still need identification.
+
 A separate forward-mode Vulkan screenshot at 640×360 verified that
 materials still render when shared pre-shading is unavailable.
