@@ -133,9 +133,12 @@ The weather replays are additional validation scenes.
 
 The new [fixed-camera day and night renderer comparison](docs/research/wiiu-deferred-shading.md#independent-renderer-comparison-of-the-fixed-camera-pair)
 isolates the remaining near-night shadow bias and the missing
-contact AO coverage. Prioritize those measurements and split the
-daylight sky error at the haze and HDR boundaries. Native frames
-4188 and 12902 are two time-of-day checkpoints.
+contact AO coverage. The daylight sky A/B isolates excess alpha
+and weak particle attenuation of the near-volume mask.
+`BOTW_HAZE_LIVE=0.378` now matches the native 0.125 haze vertex
+alpha at the tested time. Trace the mask particle coverage and
+the pre-existing half-resolution effect draws before fitting sky
+color. Native frames 4188 and 12902 are two time-of-day checkpoints.
 
 1. **Close the outdoor clear-day baseline.** Use frame 3830 for the
    [terrain shadow and SSAO readbacks](docs/research/wiiu-deferred-shading.md#clear-day-terrain-expand-at-eid-9949).

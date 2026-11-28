@@ -71,7 +71,8 @@ struct DrawParams {
     // Texture slots present (x), distance-size mode (y), squared (bits of w).
     textures: vec4<u32>,
     // Vertices per particle (4: the quad), custom shader index, alpha
-    // test on (1), the ported program family (0 standard, 1 clouds, 2 volume mask add).
+    // test on (1), the ported program family (0 standard, 1 clouds,
+    // 2 volume mask add, 3 projected volume haze).
     shape: vec4<u32>,
     // Each slot's component selection (a byte per channel).
     swizzles: vec4<u32>,
@@ -585,15 +586,18 @@ fn vertex(in: Vertex) -> Varyings {
 
     // Alpha factors (§5.9).
     var factor = dyn.alpha_scale.x;
-    let na = sv2(0x5d0u);
-    if na.y > na.x {
-        factor *= saturate((z - na.x) / (na.y - na.x));
+    // Haze_Far_simple_new's vertex program exports the emitter alpha directly.
+    if draw.shape.w != 3u {
+        let na = sv2(0x5d0u);
+        if na.y > na.x {
+            factor *= saturate((z - na.x) / (na.y - na.x));
+        }
+        let fa = sv2(0x5d8u);
+        if fa.y > fa.x {
+            factor *= 1.0 - saturate((z - fa.x) / (fa.y - fa.x));
+        }
+        factor *= area_fade;
     }
-    let fa = sv2(0x5d8u);
-    if fa.y > fa.x {
-        factor *= 1.0 - saturate((z - fa.x) / (fa.y - fa.x));
-    }
-    factor *= area_fade;
     out.factors = vec4<f32>(factor, param.x, z, 0.0);
     out.color0 = vec4<f32>(c0 * dyn.color0.rgb * color_scale * p.color0.rgb, a0 * dyn.color0.a * p.color0.a);
     out.color1 = vec4<f32>(c1 * dyn.color1.rgb * color_scale * p.color1.rgb, a1 * dyn.color1.a * p.color1.a);

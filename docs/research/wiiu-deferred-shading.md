@@ -230,6 +230,52 @@ and green discrepancy here starts at the overlay. Compare the
 live VFog intensity and effect target inputs before tuning sky
 scattering or exposure.
 
+#### Live haze intensity and mask after the day/night comparison
+
+E13377 (4188) and E11744 (12902) both export uniform
+`Sem4.x = 0.125` across the 102 vertices of the native projected
+haze mesh. The daytime and nighttime shader palettes match the
+renderer constants in each pair. ELink's Fog01 alpha curve has
+knots (0.378, 0.125), (0.8, 0.341), (1, 0.35). The diagnostic input
+`VFog=0.7` maps to approximately 0.289815 on that curve. The native
+alpha falls on the first plateau, so it only bounds VFog at or
+below 0.378. The automatic writer is still open.
+
+The mask sampled around full pixel (640, 45) has a daytime
+four-tap mean of 0.67346 native vs 1.57178 in the renderer with
+the 0.7 override. Before particle mask writes, the four taps
+are approximately 2.018 native and 1.999 renderer. At the
+corresponding half pixel (320, 22), Pixel History sees one
+passing fragment from each haze draw, with the same primitive
+number 31. Source alpha is 0.03056 native and 0.16461 renderer.
+This identifies particle mask attenuation and emitter alpha as
+separate errors at that location.
+
+The [input A/B script](../../tools/research/validate_day_night_haze_ab.py)
+uses the two renderer captures in `BOTW_FOG_OUT` and requires
+`spirv-cross` on PATH. It replaces the fragment's fade factor
+with 0.125 and the mask sample with the native four-tap mean,
+separately and together. The fixed mask is a local diagnostic.
+Its result is meaningful at the measured sky point.
+
+| Daytime sky HDR at (640, 45) | R | G | B |
+| --- | ---: | ---: | ---: |
+| Native after overlay | 0.379 | 0.488 | 0.352 |
+| Renderer with VFog 0.7 | 0.737 | 0.839 | 0.413 |
+| Replay with native fade only | 0.506 | 0.600 | 0.329 |
+| Replay with native mask only | 0.505 | 0.599 | 0.329 |
+| Replay with both | 0.406 | 0.496 | 0.293 |
+| Live renderer with 0.378 and corrected vertex fade | 0.489 | 0.580 | 0.322 |
+
+The native Fog01 vertex shader copies emitter alpha directly.
+The live program now omits the generic particle distance and
+area fade for its shader family. The 0.378 run confirms
+exactly 0.125 for every valid live vertex. Its post-particle mask
+still averages 1.36133 at the sky footprint, and the native half
+effect target already has contributions from earlier draws where
+the renderer's dedicated target starts at clear. These remain
+separate targets for the next comparison.
+
 ## Outdoor material paths
 
 The archived frame above establishes the shared render targets and the

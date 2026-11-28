@@ -496,11 +496,13 @@ fn extra_for(p: &fx::EmitterParams, dynamic: &EmitterDynamic, eye: Vec3, camera:
 /// different program per use; the standard combiner path covers the rest):
 /// 0 the standard path, 1 the cloud program (`ps_991ea4f8496e`:
 /// MountainCloud, the distant weather clouds, the volcano's),
-/// 2 the volume mask add mesh (`ps_47897e0ca792`).
+/// 2 the volume mask add mesh (`ps_47897e0ca792`),
+/// 3 the projected volume haze mesh (`ps_e76f4107e1bc`).
 fn program_family(pixel: &str) -> u32 {
     match pixel.get(..12) {
         Some("991ea4f8496e") => 1,
         Some("47897e0ca792") => 2,
+        Some("e76f4107e1bc") => 3,
         _ => 0,
     }
 }
