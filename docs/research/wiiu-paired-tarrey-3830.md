@@ -380,9 +380,52 @@ full-frame error is 0.5. A default-mode 640×360
 Vulkan screenshot verified that the original viewer path still runs.
 
 A live scene needs the two E13778 depth guides and the half-resolution
-effect buffer produced by the renderer. Identify the source of E13765's
-160×90 mask and indexed geometry, then validate their outputs separately
-from this composite.
+effect buffer produced by the renderer.
+
+### Resident haze meshes and the two mask snapshots
+
+The original Wii U v208 capture exposes two snapshots of the same R16F
+attachment. E10713 copies attachment 12571 to sampled texture 12607,
+which E10724 reads at PS1 while generating resource 12606. Then
+E10745–E10819 submit 38 draws to attachment 12571. All use the same
+vertex and pixel programs, one instance of a 144-index mesh, and the
+same 512×512 BC4_UNORM input. Seventeen draws change the R16F target.
+Comparing the active 160×90 region immediately before the sequence
+and after E10819, 14,399 out of 14,400 texels change (11,426 decrease,
+2,973 increase). The mask mean falls from 1.36484 to 0.86510. E13751
+copies the updated attachment to 12607, which E13765 reads at PS9.
+
+Cross-check against the matching local Wii U bake of
+`Pack/Bootup.pack → Effect/GameResident.sesetlist`:
+
+- The mip-0 BC4 payload (131,072 bytes) of resource 27375 is identical
+  to the mip-0 KTX2 payload of `GameResident/69b453c0.ktx2`.
+- At E10819, all 144 indices and all 33 XYZ positions match resident
+  primitive 3500784928. Primitive 1775848997 shares that mesh data.
+  Intersecting the mesh and texture IDs in the emitter definitions
+  leaves `Haze_Far` in `VolumeMaskFog02` and
+  `VolumeMaskAdd01test`. Resolve the exact set by matching the native
+  shader, which differs between these two emitters.
+- At E13765, all 480 indices and all 102 XYZ positions match resident
+  primitive 1076106540, used by `Haze_Far_simple_new` in
+  `VolumeMaskFog01` and `VolumeMaskFog01_Demo`. Those definitions
+  share the shader pair. Their draw paths are 8 and 7 respectively.
+  The field frame favors `VolumeMaskFog01`. The running set instance
+  still needs confirmation.
+
+For reproduction, use the RenderDoc texture readback at mip 0,
+the draw's post-VS index stream, and the raw position vertex stream.
+E10819 binds position at Sem9 and E13765 at Sem3, both with a 16-byte
+stride. Compare the first three components after GX2 big-endian
+conversion to the baked primitive array. Use the active mask rows
+with the 192-texel allocation stride when counting changes.
+
+E13765's first fragment constant is `(0.942, 1.0, 0.39, 3.5)`.
+The RGB matches `VolumeMaskColor` entries in the baked palette.
+This supports a palette-derived color. The source of the fourth
+component and the CPU upload path are open. The next live-renderer
+checkpoint is the R16F mask update and the RGBA16F effect draw,
+each compared against its own capture boundary.
 
 A separate forward-mode Vulkan screenshot at 640×360 verified that
 materials still render when shared pre-shading is unavailable.

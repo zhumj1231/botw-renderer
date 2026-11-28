@@ -13,7 +13,13 @@ live in `game-data/reference/visual-formulas/model-water-glass/` and
 
 ## Summary
 
-BotW has **no screen-space god-ray pass**. "Light shafts" are a *volumetric shadow mask*: agl's `VolumeMask` (`aglvolm`) slices the view frustum into many camera-facing layers, looks up the sun's cascade shadow map at each layer, accumulates lit/unlit along the view ray into a small float texture, blurs it, and the result reaches the screen only through the scene fog: the merged mask is bound as `gsys_user2`, whose `.x` scales the sun in-scatter of the fog (`m` in the fog formula of `docs/research/wiiu-deferred-shading.md#fog-pre-shading-ps-140-read-into-cemu-glsl`). Where the air between the camera and a surface is in shadow, the in-scattered fog near the camera is darker; lit air keeps the full in-scatter. That is what reads as shafts.
+The later [Wii U field replay](wiiu-paired-tarrey-3830.md#resident-haze-meshes-and-the-two-mask-snapshots)
+adds a downstream consumer to the original trace below. After the
+first snapshot feeds the scene-fog merge, resident haze draws modify
+the R16F attachment. A second snapshot feeds the haze mesh before
+the half-resolution effect buffer is composed into HDR.
+
+BotW has **no screen-space god-ray pass**. "Light shafts" are a *volumetric shadow mask*: agl's `VolumeMask` (`aglvolm`) slices the view frustum into many camera-facing layers, looks up the sun's cascade shadow map at each layer, accumulates lit/unlit along the view ray into a small float texture, blurs it, and the first snapshot reaches the screen through the scene fog: the merged mask is bound as `gsys_user2`, whose `.x` scales the sun in-scatter of the fog (`m` in the fog formula of `docs/research/wiiu-deferred-shading.md#fog-pre-shading-ps-140-read-into-cemu-glsl`). Where the air between the camera and a surface is in shadow, the in-scattered fog near the camera is darker; lit air keeps the full in-scatter. That is what reads as shafts.
 
 `VolumeMaskColor` / `VolumeMaskIntencity` (with the climate and weather
 `CalcVolumeMaskIntencity`) are written by the weather update into the
@@ -214,7 +220,7 @@ table value (`r14+0x3d5c`). If the result differs from the previous one
 then copies unit 0's colour into the KSys per-view record words
 `0x33..0x36` (alpha forced to 0 when `FUN_039cf9d8(env+0x28d8)` is 0).
 None of the VolumeMask draw functions (`0x03a61370…0x03a639a0`), the merge
-or the fog GLSL reads that colour. Its reader is not found.
+or the fog GLSL reads that colour. The later field replay finds the same RGB in the haze shader; the CPU upload path remains open.
 
 ### Radial blur (separate, use unknown)
 
