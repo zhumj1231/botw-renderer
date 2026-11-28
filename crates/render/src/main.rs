@@ -74,6 +74,7 @@ usage: render [options]
   --camera x,y,z,yaw,pitch  start camera (degrees; yaw 0 looks north / -Z);
                    overrides --place's view
   --projection fov,near,far  set vertical FOV (degrees) and clip planes (metres)
+  --shadow-cascades <a,b,c>  override the three shadow split distances (metres)
   --time <HH:MM>   time of day to start at (default 10:00); screenshots
                    hold it still
   --weather <name> keep one weather everywhere: bluesky, cloudy, rain,
@@ -114,6 +115,7 @@ struct Args {
     /// Start camera: x, y, z, yaw, pitch (degrees).
     camera: Option<[f32; 5]>,
     projection: PerspectiveProjection,
+    shadow_cascades: Option<[f32; 3]>,
     /// Time of day to start at, in hours.
     time: Option<f32>,
     /// Weather to keep everywhere (index into `env::WEATHERS`).
@@ -143,6 +145,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             far: 30_000.0,
             ..default()
         },
+        shadow_cascades: None,
         time: None,
         weather: None,
         resolution: None,
@@ -177,6 +180,16 @@ fn parse_args() -> Result<Option<Args>, String> {
                 );
             }
             "--projection" => args.projection = parse_projection(&value()?)?,
+            "--shadow-cascades" => {
+                let text = value()?;
+                let distances: Vec<f32> = text.split(',').map(parse_number).collect::<Result<_, _>>()?;
+                args.shadow_cascades = match distances[..] {
+                    [near, mid, far] if near > 2.0 && near < mid && mid < far && far.is_finite() => {
+                        Some([near, mid, far])
+                    }
+                    _ => return Err("--shadow-cascades needs three increasing distances above 2 m".into()),
+                };
+            }
             "--time" => args.time = Some(parse_time(&value()?)?),
             "--weather" => {
                 let name = value()?;
@@ -470,6 +483,7 @@ fn main() -> AppExit {
             start: args.time.unwrap_or(daynight::DEFAULT_START),
             flowing: time_flows,
             assets: args.assets.clone(),
+            shadow_cascades: args.shadow_cascades,
         })
         .add_systems(
             Startup,

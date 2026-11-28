@@ -118,8 +118,9 @@ color adjustment with constants 0.9900 and 0.1800. The sampled sky
 pixel's raw main-HDR RGB before the pass is `(0.515625, 0.6640625, 0.4375)`
 and the resulting 10-bit codes are `(390, 511, 315)`. This pass has
 no binding to the LightAnalyzer 2×2 exposure texture or the 12×1
-analyzer table. The exact subpixel sampler inputs and subsequent
-display passes remain to be matched. This baseline is suitable for
+analyzer table. The [same-input comparison](wiiu-paired-tarrey-3830.md#same-input-display-curve-verification)
+verifies the Bloom mip and the output codes for sampled pixels.
+Subsequent display passes remain to be matched. This baseline is suitable for
 comparing the atmospheric and display checkpoints to the same view
 in clear night and rain.
 

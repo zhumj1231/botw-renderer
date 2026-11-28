@@ -62,6 +62,8 @@ pub struct DayNightPlugin {
     pub flowing: bool,
     /// The `assets/` folder to read the palettes from.
     pub assets: PathBuf,
+    /// Optional view splits measured in an original frame.
+    pub shadow_cascades: Option<[f32; 3]>,
 }
 
 impl Plugin for DayNightPlugin {
@@ -137,13 +139,17 @@ impl Plugin for DayNightPlugin {
         };
         let environment = Environment::fallback();
         let sky = environment.sky(&time, &Climate::default(), &Weather::default());
+        let shadow_cascades = self.shadow_cascades.unwrap_or([32.0, 64.0, 200.0]);
         app.insert_resource(time)
             .insert_resource(environment)
             .insert_resource(sky)
             .insert_resource(LoadingEnvironment(loading))
             .init_resource::<SkyMedium>()
             .add_plugins(MaterialPlugin::<SkyMaterial>::default())
-            .add_systems(Startup, (spawn_lights, spawn_sky))
+            .add_systems(
+                Startup,
+                (move |commands: Commands| spawn_lights(commands, shadow_cascades), spawn_sky),
+            )
             .add_systems(
                 Update,
                 (
@@ -1017,16 +1023,7 @@ fn update_light_look(
 #[derive(Component)]
 pub struct MainLight;
 
-/// Static JP v208 Main profile. The native scene can update the bounds at runtime.
-fn cascades() -> CascadeShadowConfig {
-    CascadeShadowConfig {
-        bounds: vec![32.0, 64.0, 200.0],
-        overlap_proportion: 0.0,
-        minimum_distance: 2.0,
-    }
-}
-
-fn spawn_lights(mut commands: Commands) {
+fn spawn_lights(mut commands: Commands, bounds: [f32; 3]) {
     // No disk (a light without one gets the sun's): it shades from where the
     // game's light does, cut above the horizon, while the sun sinks;
     // `sky.wgsl` draws the sun and the moon where they are.
@@ -1038,7 +1035,11 @@ fn spawn_lights(mut commands: Commands) {
             ..default()
         },
         SunDisk::OFF,
-        cascades(),
+        CascadeShadowConfig {
+            bounds: bounds.to_vec(),
+            overlap_proportion: 0.0,
+            minimum_distance: 2.0,
+        },
     ));
 }
 

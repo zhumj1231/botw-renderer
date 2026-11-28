@@ -185,3 +185,58 @@ cells. At the matched sample points, the fog bytes and RGB values
 are unchanged by the fix. The remaining comparisons are the
 near-cascade range and filter, plus the residual fog tint and
 display mapping.
+
+### Cascade split A/B
+
+Replay the same object snapshot and camera with the renderer's default
+`32,64,200` m bounds and with
+`--shadow-cascades 7.790757,24.622145,120`. These trial bounds come
+from the original frame's E9949 context buffer and are verified in
+the trial's directional-light uniform. Both renderer runs use the
+same Bevy shadow map dimensions and sampling code. The estimated
+game-versus-renderer directional light angle differs by about
+0.012 degrees in this view.
+
+Compare Expand red before cloud attenuation. Match original class 4
+against renderer class 4 or 5, require reference view depth within
+max(0.1 m, 1%) of renderer depth, and require the two renderer depths
+within 0.001 m. Record mean absolute errors in visibility bytes.
+The shaded subset has original visibility below 243.
+
+| View depth (m) | Matched pixels | All pixels, default → trial | Shaded subset, default → trial |
+| --- | ---: | ---: | ---: |
+| 2–7.79 | 62,325 | 6.256 → 6.983 | 68.137 → 75.719 |
+| 7.79–24.62 | 62,829 | 10.029 → 9.212 | 26.015 → 23.219 |
+| 24.62–80 | 27,950 | 9.338 → 7.917 | 17.312 → 19.925 |
+| 80–120 | 0 | — | — |
+
+Of the 1,034 nearest pixels darker than 128 in the original and
+at least 224 in the trial, 739 lie in three 64×48 full-resolution
+tiles around Link's shadow. Those pixels are also bright in the
+default run, which has no corresponding shadow caster. The split
+override is useful for replication. It does not remove the need to
+match caster coverage or the original shadow projection and PCF.
+Keep the default splits until more views establish a useful policy.
+
+### Same-input display curve verification
+
+At original display compose E14248, PS1 reads the 1280×720 scene
+HDR. PS0 exposes a 320×180 Bloom texture with five mips. The scene
+samples agree with the corresponding full-resolution texels. The
+Bloom samples match bilinear sampling of mip 1, 160×90.
+
+In an offline shader replacement, output each sampled RGB through
+`c / (1 + c)` into the original 10-bit attachment. Invert that
+encoding for the comparison. Sample 20 positions at x = 450, 640,
+873 and 1050 and y = 45, 150, 290, 465 and 600. For Bloom, the
+mean channel difference between GPU sample and bilinear CPU sample
+is 0.00803 using mip 0 and 0.000261 using mip 1. This comparison
+includes quantization from the diagnostic encoding.
+
+Apply the renderer's exponential curve and saturation with the
+original bindings' raw inputs and mip 1. This reproduces 59 of
+60 original 10-bit channels exactly and the remaining one within
+one code. Using mip 0 instead had a maximum error of 40 codes.
+The independent renderer already composes its 1/8-resolution
+Bloom level. Compare upstream HDR and Bloom production before
+changing the curve for this case.

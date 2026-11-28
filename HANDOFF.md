@@ -107,9 +107,11 @@ with the event map as a reference for matching pipeline state.
 The first matched visual pair is in
 [the Tarrey Town checkpoint](docs/research/wiiu-paired-tarrey-3830.md).
 Use the five documented map flags for the post-construction object
-snapshot. Compare the far-slope visibility and fog readbacks before
-tuning the scene color. Use the captured HDR input to isolate the
-display curve. The weather replays are additional validation scenes.
+snapshot. The far-slope shadow fix and the cascade split A/B are
+verified in the paired camera. Use the original's sky and field fog
+readbacks to compare upstream HDR, then compare the 1/8-resolution
+Bloom outputs. The same-input display curve is verified at the
+sampled points. The weather replays are additional validation scenes.
 
 1. **Close the outdoor clear-day baseline.** Use frame 3830 for the
    [terrain shadow and SSAO readbacks](docs/research/wiiu-deferred-shading.md#clear-day-terrain-expand-at-eid-9949).
