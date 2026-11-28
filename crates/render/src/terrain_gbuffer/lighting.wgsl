@@ -197,17 +197,31 @@ fn expand_shadow(light: MainLight, uv: vec2<f32>, step: vec2<f32>, leaf: bool) -
         }
     }
 
-    // The renderer uses scene material defaults: depth scale 1 and depth/world offsets 0.
-    let fade_far = saturate(0.05 * (z - (range - 40.0)));
-    if leaf || fade_far == 0.0 {
+    if leaf {
         return dynamic;
     }
     let world = (view.world_from_view * vec4(P, 1.0)).xyz;
+    return blend_baked_shadow(dynamic, world, z, range);
+}
+
+fn blend_baked_shadow(dynamic: f32, world: vec3<f32>, z: f32, range: f32) -> f32 {
+    // The renderer uses scene material defaults: depth scale 1 and depth/world offsets 0.
+    let fade_far = saturate(0.05 * (z - (range - 40.0)));
+    if fade_far == 0.0 {
+        return dynamic;
+    }
     let map_uv = world.xz * vec2(0.0001, 0.000125) + 0.5;
     let weights = textureLoad(look_texture, vec2(28, 0), 0).rgb;
     let irradiance = textureSampleLevel(solar_irradiation, solar_sampler, map_uv, 0.0).rgb;
     let baked = dot(irradiance, weights);
     return mix(dynamic, baked * baked * baked * baked, fade_far);
+}
+
+fn field_expand_visibility(pixel: FieldPixel, light: MainLight) -> vec4<f32> {
+    var visibility = field_visibility(pixel, light);
+    visibility.x = blend_baked_shadow(visibility.x, pixel.pbr.world_position.xyz,
+        -pixel.frame.p.z, field_shadow_range(light.index));
+    return visibility;
 }
 
 @fragment
@@ -220,10 +234,10 @@ fn expand(in: FieldVertexOutput) -> @location(0) vec4<f32> {
     }
     let light = main_light_source();
     if in.code == 4u {
-        return field_visibility(field_pixel(uv), light);
+        return field_expand_visibility(field_pixel(uv), light);
     }
     if in.code == 5u {
-        return field_visibility(object_pixel(uv), light);
+        return field_expand_visibility(object_pixel(uv), light);
     }
 
     let sun = expand_shadow(light, uv, 1.0 / half_size, in.code == 6u);

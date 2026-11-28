@@ -112,3 +112,76 @@ the map or game-state data. Use that for the stable lighting baseline.
 The controlled filter is a diagnostic. Leave it out of the production
 bake and renderer. The next lighting comparison is distant-slope fog
 transmission and in-scattering in this camera.
+
+### Save flags and the paired scene bake
+
+The original JP v208 static `I-3` map unit contains five `LinkTagAnd`
+sources with `SaveFlagOnOffType = 0` and output links `Delete` and
+`Create`. The `UMiiMini_MakeVillage_` flags select these rock removals:
+
+| Flag suffix | Rock suffixes removed |
+| --- | --- |
+| `Activated` | `02` |
+| `Invite01` | `06` |
+| `Invite02` | `04` |
+| `Invite03` | `01` |
+| `Invite04` | `03`, `05` |
+
+The `Create` edges also target village mesh instances. The reference
+visuals motivate a diagnostic snapshot with all five flags active.
+The bake's repeatable `--map-delete-flag` option reads the matching
+static `Delete` edges and applies them during the objects step. It
+does not interpret the save file or execute the full link runtime.
+The option is opt-in and can be combined with `--only objects`
+to reuse the same terrain, lighting textures and model assets.
+In `I-3`, the snapshot removed 36 placements, including all six
+rocks, and added zero. The Vulkan comparison shows that the occluding
+rocks are gone while the corresponding houses remain.
+
+### Identify the first large far-slope discrepancy
+
+Read the original pre-shading outputs after E11011 and the old
+independent outputs after pre-shading has stored the attachments.
+The renderer guide stores view depth directly. Decode the original
+normalized depth with `1 + 24999 × depth`. Transmission and sun
+visibility are channels B and R, respectively, in the UNORM8
+pre-shading target.
+
+| Half pixel | Reference and renderer depth (m) | Transmission byte, original → renderer | Sun byte, original → renderer |
+| --- | --- | --- | --- |
+| (436, 37) | 297.52 / 296.94 | 105 → 108 | 35 → 255 |
+| (425, 49) | 240.85 / 240.62 | 112 → 115 | 216 → 255 |
+| (430, 50) | 240.38 / 240.32 | 112 → 115 | 201 → 255 |
+| (437, 45) | 295.36 / 294.78 | 105 → 108 | 33 → 255 |
+
+At (436, 37), additive fog RGB is (0.2422, 0.3086, 0.1680) in the
+original and (0.2324, 0.2969, 0.1641) in the old renderer. The sun
+visibility discrepancy is substantially larger. The original field
+path blends in the solar irradiation texture beyond the near
+cascades. The independent field Expand path previously returned
+the near cascade result and faded to full sunlight. An initial
+terrain-only patch left the selected ridge samples at 255. Reading
+the independent classify attachment at those points gives D16 value
+1285 (class 5, static field object). The native class-4 field
+coverage at these locations includes that geometry. Both independent
+field classes now use the existing baked-shadow blend shared with
+the character path. The field classes still use the renderer's
+near-cascade setup.
+
+The subsequent Vulkan replay successfully ran both Expand and
+composition. Pre-shading E24502 produced these visibility bytes
+with the shared field path:
+
+| Half pixel | Original | Old renderer | Shared baked shadow |
+| --- | ---: | ---: | ---: |
+| (436, 37) | 35 | 255 | 34 |
+| (425, 49) | 216 | 255 | 222 |
+| (430, 50) | 201 | 255 | 200 |
+| (437, 45) | 33 | 255 | 34 |
+
+In the renderer's Expand readback beyond 210 m, visibility below
+255 appears on 14 of 150 class-4 cells and 8,843 of 12,554 class-5
+cells. At the matched sample points, the fog bytes and RGB values
+are unchanged by the fix. The remaining comparisons are the
+near-cascade range and filter, plus the residual fog tint and
+display mapping.
