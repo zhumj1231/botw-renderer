@@ -227,18 +227,40 @@ def export_draws(replay, out, textures, baseline):
 
 def compare_renderer(replay, fixture):
     textures = {t.resourceId: t for t in replay.GetTextures()}
+    names = {r.resourceId: r.name for r in replay.GetResources()}
+    actions = list(flatten(replay.GetRootActions()))
     pending = {
         "haze_mask": ("mask_final.bin", 160, 90, 192, 2),
         "haze_effect": ("effect_haze.bin", 640, 360, 640, 8),
     }
 
     report = {}
-    for action in reversed(list(flatten(replay.GetRootActions()))):
-        if not (action.flags & rd.ActionFlags.Drawcall) or action.numIndices not in (144, 480):
+
+    def source_of(resource, before):
+        writers = [u for u in replay.GetUsage(resource) if u.eventId < before
+                   and str(u.usage).endswith(("ColorTarget", "CopyDst", "ResolveDst"))]
+        if not writers:
+            return {"name": names.get(resource)}
+        writer = writers[-1]
+        replay.SetFrameEvent(writer.eventId, False)
+        state = replay.GetPipelineState()
+        reflection = state.GetShaderReflection(rd.ShaderStage.Pixel)
+        return {
+            "name": names.get(resource), "last_write": writer.eventId,
+            "entry": reflection.entryPoint if reflection else None,
+        }
+
+    for action in reversed(actions):
+        if not (action.flags & rd.ActionFlags.Drawcall) or action.numIndices not in (3, 144, 480):
             continue
         replay.SetFrameEvent(action.eventId, False)
         pipe = replay.GetPipelineState()
         shader = pipe.GetShaderReflection(rd.ShaderStage.Pixel)
+        if shader and shader.entryPoint == "composite_overlay":
+            report["composite_inputs"] = {
+                shader.readOnlyResources[r.access.index].name: source_of(r.descriptor.resource, action.eventId)
+                for r in pipe.GetReadOnlyResources(rd.ShaderStage.Pixel)
+            }
         if not shader or shader.entryPoint not in pending:
             continue
         name, w, h, pitch, stride = pending.pop(shader.entryPoint)
@@ -258,6 +280,11 @@ def compare_renderer(replay, fixture):
             "mean_abs": sum(differences) / len(differences),
             "max_abs": max(differences),
         }
+        if shader.entryPoint == "haze_mask":
+            copy = next((copy for copy in reversed(actions) if copy.eventId < action.eventId
+                         and copy.copyDestination == target.resourceId), None)
+            if copy:
+                report["haze_mask"]["base"] = source_of(copy.copySource, copy.eventId)
         (fixture / ("renderer-" + name)).write_bytes(gpu)
         if not pending:
             return report

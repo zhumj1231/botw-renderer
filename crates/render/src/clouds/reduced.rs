@@ -119,7 +119,20 @@ pub struct ReducedFrame {
     frame: UVec2,
     near: f32,
     far: f32,
+    edge_adjust: Vec4,
     clouds: Option<CloudMaterial>,
+}
+
+impl ReducedFrame {
+    pub(crate) fn overlay_guides<'a>(
+        &self,
+        images: &'a RenderAssets<GpuImage>,
+    ) -> Option<(&'a TextureView, &'a TextureView, Vec4)> {
+        let full = images.get(&self.full)?;
+        let half = images.get(&self.half)?;
+        self.clouds.as_ref()?;
+        Some((&full.texture_view, &half.texture_view, self.edge_adjust))
+    }
 }
 
 /// `render_buffer_color` DRAW_COLOR=5's `Context` (`FUN_03a05de0`) and the
@@ -330,6 +343,7 @@ fn follow_frame(
         (projection.fov * 0.5).tan(),
         frame.as_vec2(),
     );
+    reduced.edge_adjust = Vec4::new(params.param0.x, params.param1.w, 0.0, 0.0);
     if (resized
         || materials
             .get(&material.0)

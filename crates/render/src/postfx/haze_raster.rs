@@ -291,21 +291,48 @@ impl HazeRasterReplay {
     }
 
     pub(super) fn draw(&self, encoder: &mut CommandEncoder, cache: &PipelineCache) -> Option<()> {
+        self.draw_from(encoder, cache, None)
+    }
+
+    pub(super) fn draw_from(
+        &self,
+        encoder: &mut CommandEncoder,
+        cache: &PipelineCache,
+        live_mask: Option<&Texture>,
+    ) -> Option<()> {
         let mask_pipeline = cache.get_render_pipeline(self.mask.pipeline)?;
         let effect_pipeline = cache.get_render_pipeline(self.effect.pipeline)?;
-        self.mask.draw(encoder, mask_pipeline);
-        self.effect.draw(encoder, effect_pipeline);
+        let mask = live_mask.unwrap_or(&self.mask.base);
+        if mask.size() != self.mask.target.size() {
+            return None;
+        }
+        self.mask.draw(encoder, mask_pipeline, Some(mask));
+        self.effect.draw(
+            encoder,
+            effect_pipeline,
+            live_mask.is_none().then_some(&self.effect.base),
+        );
         Some(())
     }
 }
 
 impl RasterPass {
-    fn draw(&self, encoder: &mut CommandEncoder, pipeline: &RenderPipeline) {
-        encoder.copy_texture_to_texture(
-            self.base.as_image_copy(),
-            self.target.as_image_copy(),
-            self.target.size(),
-        );
+    fn draw(
+        &self,
+        encoder: &mut CommandEncoder,
+        pipeline: &RenderPipeline,
+        base: Option<&Texture>,
+    ) {
+        let load = if let Some(base) = base {
+            encoder.copy_texture_to_texture(
+                base.as_image_copy(),
+                self.target.as_image_copy(),
+                self.target.size(),
+            );
+            LoadOp::Load
+        } else {
+            LoadOp::Clear(LinearRgba::BLACK.into())
+        };
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some(self.label),
             color_attachments: &[Some(RenderPassColorAttachment {
@@ -313,7 +340,7 @@ impl RasterPass {
                 depth_slice: None,
                 resolve_target: None,
                 ops: Operations {
-                    load: LoadOp::Load,
+                    load,
                     store: StoreOp::Store,
                 },
             })],

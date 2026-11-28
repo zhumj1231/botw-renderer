@@ -33,14 +33,16 @@ use bevy::render::extract_component::{
     ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
     UniformComponentPlugin,
 };
+use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::binding_types::{sampler, texture_2d, uniform_buffer};
 use bevy::render::render_resource::*;
-use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
-use bevy::render::texture::{CachedTexture, TextureCache};
+use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
+use bevy::render::texture::{CachedTexture, GpuImage, TextureCache};
 use bevy::render::view::ViewTarget;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
 use crate::daynight::{Environment, Sky};
+use crate::{clouds::reduced::ReducedFrame, volume_mask::VolumeMaskTextures};
 
 mod haze_raster;
 mod overlay;
@@ -461,14 +463,18 @@ fn game_postfx(
         &PostFx,
         &DynamicUniformIndex<PostFx>,
         Option<&BloomLevels>,
+        Option<&VolumeMaskTextures>,
     )>,
     pipelines: Res<PostFxPipelines>,
     pipeline_cache: Res<PipelineCache>,
     uniforms: Res<ComponentUniforms<PostFx>>,
     overlay: Option<Res<overlay::OverlayReplay>>,
+    reduced: Option<Res<ReducedFrame>>,
+    images: Res<RenderAssets<GpuImage>>,
+    queue: Res<RenderQueue>,
     mut ctx: RenderContext,
 ) {
-    let (target, settings, uniform_index, levels) = view.into_inner();
+    let (target, settings, uniform_index, levels, volume) = view.into_inner();
     let Some(uniform) = uniforms.binding() else {
         return;
     };
@@ -496,12 +502,33 @@ fn game_postfx(
     };
 
     let post_process = target.post_process_write();
+    let bases = volume
+        .zip(reduced.as_deref())
+        .and_then(|(volume, reduced)| {
+            let (full_depth, half_depth, edge_adjust) = reduced.overlay_guides(&images)?;
+            Some(overlay::LiveBases {
+                scene: post_process.source,
+                mask: volume.unmerged_near_mask(),
+                full_depth,
+                half_depth,
+                edge_adjust,
+            })
+        });
     let bloom_on = settings.correction.z > 0.5;
     let encoder = ctx.command_encoder();
     encoder.push_debug_group("game_postfx");
     let scene = overlay
         .as_deref()
-        .and_then(|overlay| overlay.draw(encoder, &pipeline_cache, target.main_texture().size()))
+        .and_then(|overlay| {
+            overlay.draw(
+                encoder,
+                &device,
+                &queue,
+                &pipeline_cache,
+                target.main_texture().size(),
+                bases,
+            )
+        })
         .unwrap_or(post_process.source);
     let bloom = match levels {
         Some(levels) if bloom_on => {

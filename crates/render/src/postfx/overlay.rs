@@ -4,7 +4,7 @@
 use bevy::asset::{load_internal_asset, uuid_handle};
 use bevy::core_pipeline::FullscreenShader;
 use bevy::prelude::*;
-use bevy::render::render_resource::binding_types::{sampler, texture_2d};
+use bevy::render::render_resource::binding_types::{sampler, texture_2d, uniform_buffer};
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 
@@ -33,6 +33,15 @@ pub(super) struct OverlayReplay {
     inputs: BindGroup,
     output: TextureView,
     raster: Option<HazeRasterReplay>,
+    live: Option<(BindGroupLayoutDescriptor, Sampler)>,
+}
+
+pub(super) struct LiveBases<'a> {
+    pub scene: &'a TextureView,
+    pub mask: &'a Texture,
+    pub full_depth: &'a TextureView,
+    pub half_depth: &'a TextureView,
+    pub edge_adjust: Vec4,
 }
 
 pub(super) fn init(
@@ -58,6 +67,11 @@ pub(super) fn init(
         }
         None => None,
     };
+    let live = std::env::var_os("BOTW_HAZE_LIVE_BASES").is_some();
+    if live && raster.is_none() {
+        error!("BOTW_HAZE_LIVE_BASES needs BOTW_HAZE_RASTER");
+        return;
+    }
     let views = [
         ("hdr-pre", FRAME, TextureFormat::Rg11b10Ufloat, 4),
         ("effect-post", HALF, FORMAT, 8),
@@ -125,6 +139,7 @@ pub(super) fn init(
                 texture_2d(unfiltered),
                 texture_2d(unfiltered),
                 sampler(SamplerBindingType::Filtering),
+                uniform_buffer::<Vec4>(false),
             ),
         ),
     );
@@ -133,6 +148,8 @@ pub(super) fn init(
         min_filter: FilterMode::Linear,
         ..default()
     });
+    let mut edge = UniformBuffer::from(Vec4::new(0.0000400016, 4.2890134, 0.0, 0.0));
+    edge.write_buffer(&device, &queue);
     let inputs = device.create_bind_group(
         "hdr_overlay_inputs",
         &cache.get_bind_group_layout(&layout),
@@ -142,6 +159,7 @@ pub(super) fn init(
             &full_depth,
             &half_depth,
             &linear_clamp,
+            edge.binding().unwrap(),
         )),
     );
     let output = texture(
@@ -154,7 +172,7 @@ pub(super) fn init(
     .create_view(&TextureViewDescriptor::default());
     let pipeline = cache.queue_render_pipeline(RenderPipelineDescriptor {
         label: Some("hdr_overlay_composite".into()),
-        layout: vec![layout],
+        layout: vec![layout.clone()],
         vertex: fullscreen.to_vertex_state(),
         fragment: Some(FragmentState {
             shader: SHADER,
@@ -173,6 +191,7 @@ pub(super) fn init(
         inputs,
         output,
         raster,
+        live: live.then_some((layout, linear_clamp)),
     });
 }
 
@@ -180,14 +199,41 @@ impl OverlayReplay {
     pub(super) fn draw<'a>(
         &'a self,
         encoder: &mut CommandEncoder,
+        device: &RenderDevice,
+        queue: &RenderQueue,
         cache: &PipelineCache,
         size: Extent3d,
+        bases: Option<LiveBases<'_>>,
     ) -> Option<&'a TextureView> {
         if size != FRAME {
             return None;
         }
         let pipeline = cache.get_render_pipeline(self.pipeline)?;
-        if let Some(raster) = &self.raster {
+        let live_bindings = if let Some((layout, sampler)) = &self.live {
+            let bases = bases?;
+            let raster = self.raster.as_ref()?;
+            let mut edge = UniformBuffer::from(bases.edge_adjust);
+            edge.write_buffer(device, queue);
+            let group = device.create_bind_group(
+                "hdr_overlay_live_inputs",
+                &cache.get_bind_group_layout(layout),
+                &BindGroupEntries::sequential((
+                    bases.scene,
+                    raster.effect(),
+                    bases.full_depth,
+                    bases.half_depth,
+                    sampler,
+                    edge.binding()?,
+                )),
+            );
+            raster.draw_from(encoder, cache, Some(bases.mask))?;
+            Some(group)
+        } else {
+            None
+        };
+        if self.live.is_none()
+            && let Some(raster) = &self.raster
+        {
             raster.draw(encoder, cache)?;
         }
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -204,7 +250,7 @@ impl OverlayReplay {
             ..default()
         });
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &self.inputs, &[]);
+        pass.set_bind_group(0, live_bindings.as_ref().unwrap_or(&self.inputs), &[]);
         pass.draw(0..3, 0..1);
         Some(&self.output)
     }

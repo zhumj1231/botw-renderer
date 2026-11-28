@@ -44,7 +44,7 @@ const DOME_RADIUS: f32 = 22_000.0;
 /// Side of the baked noise texture, in texels.
 const NOISE_SIZE: usize = 256;
 
-mod reduced;
+pub(crate) mod reduced;
 
 pub struct CloudsPlugin;
 

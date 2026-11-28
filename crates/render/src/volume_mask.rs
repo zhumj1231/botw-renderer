@@ -354,9 +354,15 @@ fn init_pipelines(
 
 /// Each unit's layer target and blurred mask for this frame.
 #[derive(Component)]
-struct VolumeMaskTextures {
+pub(crate) struct VolumeMaskTextures {
     layers: [CachedTexture; 2],
     masks: [CachedTexture; 2],
+}
+
+impl VolumeMaskTextures {
+    pub(crate) fn unmerged_near_mask(&self) -> &Texture {
+        &self.masks[0].texture
+    }
 }
 
 fn prepare_textures(
@@ -382,7 +388,9 @@ fn prepare_textures(
                     sample_count: 1,
                     dimension: TextureDimension::D2,
                     format: UNIT_FORMAT,
-                    usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                    usage: TextureUsages::RENDER_ATTACHMENT
+                        | TextureUsages::TEXTURE_BINDING
+                        | TextureUsages::COPY_SRC,
                     view_formats: &[],
                 },
             )

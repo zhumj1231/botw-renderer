@@ -497,6 +497,24 @@ matches all 14,400 active R16F texels exactly. Its haze draw at E27295
 matches all 230,400 active RGBA16F texels exactly. The capture's padded
 rows are excluded from both comparisons.
 
+### Replay with live scene inputs
+
+With both replay directories set, also set `BOTW_HAZE_LIVE_BASES=1`
+to test the runtime dependencies at 1280×720. The mask draws start
+from a copy of the near unit's blurred R16F image. The earlier
+scene-fog merge keeps its original input. The haze target starts
+from transparent contribution and unit scene transmittance
+`(0, 0, 0, 1)`. The compositor reads live scene HDR and the reduced
+cloud pass's full and half normalized depth guides. Its edge-adjust
+constants come from the current camera projection.
+
+The Vulkan capture verifies mask base producer E24265 (`blur`),
+the full and half depth producers E27132 and E27143 (`full` and
+`half`), and the live scene HDR attachment. The haze stage at E28141
+consumes the new mask. The fixed-input regression still reproduces
+all 14,400 R16F and 230,400 RGBA16F texels exactly. This diagnostic
+still uses captured particle geometry and fragment palette values.
+
 The live vertex path can take the two meshes' `Sem7` from their
 baked RGBA vertex colors. Every vertex in both E10819 and E13765
 matches the corresponding baked color after conversion to f32.
