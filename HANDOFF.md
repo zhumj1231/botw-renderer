@@ -116,9 +116,11 @@ HDR composite is also verified on Vulkan in `BOTW_OVERLAY_REPLAY` mode
 with the four original inputs. The 160×90 mask draws match
 `VolumeMaskAdd01test/Haze_Far` and their shader swizzle, blend and
 downstream contribution are verified. E13765's mesh matches
-`Haze_Far_simple_new`. Reconstruct the R16F mask update and the
-RGBA16F effect draw as separate passes, starting with captured
-geometry before driving them from live emitter state.
+`Haze_Far_simple_new`. Replacement fragment shaders reproduce
+both captured targets exactly. Use `BOTW_HAZE_EXPORT` with the
+mask A/B script to get all 39 indexed post-VS streams and compare
+independent Vulkan raster passes against the R16F and RGBA16F
+snapshots, then drive the passes with live emitter state.
 The same-input display curve is verified at the sampled points.
 The weather replays are additional validation scenes.
 

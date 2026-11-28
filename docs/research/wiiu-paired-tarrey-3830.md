@@ -435,7 +435,7 @@ each compared against its own capture boundary.
 At E10819 the BC4 sampler view maps every component of sampled RGBA
 to red. The fragment samples scalar `m` at `Sem8.xy` and computes
 `src.r = Sem7.r × lerp(Sem1.r, Sem0.r, m²)` and
-`src.a = Sem4.x × saturate(Sem7.a × m × (Sem0.a − Sem1.a))`.
+`src.a = Sem4.x × saturate(Sem0.a × (Sem7.a × m))`.
 It discards at the alpha threshold. The R16F color blend applies
 `mask = src.r × src.a + mask × (1 − src.a)`. Instrumented RenderDoc
 replay confirmed the red-to-alpha mapping at all 35 sampled passing
@@ -456,6 +456,30 @@ With the mask draws active, mean linear HDR RGB relative to the bypass
 changes by `(−0.0707, −0.0740, −0.0271)` on the far-slope box and by
 `(−0.0941, −0.0965, −0.0304)` on sky. The localized haze draw adds
 color while the preceding mask draws restrain its strength.
+
+### Fragment reconstruction and raster inputs
+
+The same script separately replaces the mask and E13765 fragment
+programs with compact GLSL equivalents. The original geometry,
+interpolants, resource views, raster state and fixed-function blends
+are held constant. In the mask program, only `Sem0.a` supplies the
+color alpha term. `Sem1` participates in the RGB interpolation.
+
+The rebuilt mask is identical across all 14,400 active R16F texels.
+The rebuilt E13765 draw is identical across the entire 640×368
+RGBA16F allocation. Each replacement also preserves its own
+pre-draw input exactly.
+
+Set `BOTW_HAZE_EXPORT` to a local fixture directory when running the
+script. It exports the indexed post-VS streams, fragment uniform
+blocks, raster state and output signatures for all 38 mask draws and
+E13765. It also exports the two sampled input textures with their
+mips and the original mask and effect attachment snapshots for
+comparison. In this capture the mask uses a 160×90 viewport with no
+culling. E13765 uses a 640×360 viewport with front-face culling.
+The Vulkan viewports have negative height and both pipelines use
+counterclockwise front faces. Keep those conventions when replaying
+the fixture on an independent raster path.
 
 ### Camera-relative mask emitter
 
