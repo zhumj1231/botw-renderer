@@ -548,26 +548,37 @@ fn field_footprint(frame: Frame, normal_guide: f32, guides: texture_2d<f32>) -> 
     return FieldFootprint(taps, weights);
 }
 
-fn field_ambient_from_prepass(
+// RGB is diffuse ambient. Alpha is sun visibility including cloud shadow,
+// or a negative value when pre-shading cannot be reconstructed.
+const NO_FIELD_PRESHADING: vec4<f32> = vec4(0.0, 0.0, 0.0, -1.0);
+
+fn field_lighting_from_prepass(
     frame: Frame,
     normal: vec3<f32>,
     diffuse: texture_2d<f32>,
     guides: texture_2d<f32>,
+    shadow: texture_2d<f32>,
 ) -> vec4<f32> {
 #ifdef DEPTH_PREPASS
     let size = max(textureDimensions(view_bindings::depth_prepass_texture) / 2u, vec2(1u));
-    if any(textureDimensions(guides) != size) || any(textureDimensions(diffuse) != size) {
-        return vec4(0.0);
+    if any(textureDimensions(guides) != size) || any(textureDimensions(diffuse) != size)
+            || any(textureDimensions(shadow) != size) {
+        return NO_FIELD_PRESHADING;
     }
     let view_normal = direction_world_to_view(normal) * 0.5 + 0.5;
     let footprint = field_footprint(frame, dot(view_normal, vec3(1.0 / 3.0)), guides);
-    var ambient = vec3(0.0);
-    for (var i = 0u; i < 4u; i += 1u) {
-        ambient += footprint.weights[i] * textureLoad(diffuse, footprint.taps[i], 0).rgb;
+    if !any(footprint.weights > vec4(0.0)) {
+        return NO_FIELD_PRESHADING;
     }
-    return vec4(ambient, dot(footprint.weights, vec4(1.0)));
+    var preshaded = vec4(0.0);
+    for (var i = 0u; i < 4u; i += 1u) {
+        let tap = footprint.taps[i];
+        preshaded += footprint.weights[i] * vec4(textureLoad(diffuse, tap, 0).rgb,
+            textureLoad(shadow, tap, 0).x);
+    }
+    return preshaded;
 #else
-    return vec4(0.0);
+    return NO_FIELD_PRESHADING;
 #endif
 }
 
@@ -623,20 +634,20 @@ fn field_compose(pbr: PbrInput, s: FieldSurface, frame: Frame, light: MainLight,
 }
 
 fn field_color(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao: f32, cover: f32, means: texture_2d<f32>, rain: vec2<f32>, overcast: f32) -> vec3<f32> {
-    return field_color_with_ambient(pbr, s_in, frame, shadow, ao, cover, means, rain, overcast, vec4(0.0));
+    return field_color_with_lighting(pbr, s_in, frame, shadow, ao, cover, means, rain, overcast, NO_FIELD_PRESHADING);
 }
 
-fn field_color_with_ambient(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao: f32, cover: f32, means: texture_2d<f32>, rain: vec2<f32>, overcast: f32, shared_ambient: vec4<f32>) -> vec3<f32> {
+fn field_color_with_lighting(pbr: PbrInput, s_in: FieldSurface, frame: Frame, shadow: f32, ao: f32, cover: f32, means: texture_2d<f32>, rain: vec2<f32>, overcast: f32, shared_lighting: vec4<f32>) -> vec3<f32> {
     let light = main_light_source();
-    var S: f32;
-    if s_in.leaf > 0.5 {
-        S = field_shadow(light, pbr, frame.p.z, shadow, s_in.translucent);
-    } else {
-        S = shadow * field_surface_shadow(light, pbr, frame.p.z);
-    }
     let vis = sky_visibility(cover, pbr.world_position.y, s_in.N.y, s_in.flag, -frame.p.z);
-    var ambient = shared_ambient.rgb;
-    if shared_ambient.w == 0.0 {
+    var S = shared_lighting.w;
+    var ambient = shared_lighting.rgb;
+    if S < 0.0 {
+        if s_in.leaf > 0.5 {
+            S = field_shadow(light, pbr, frame.p.z, shadow, s_in.translucent);
+        } else {
+            S = shadow * field_surface_shadow(light, pbr, frame.p.z);
+        }
         ambient = field_ambient_at(s_in, -frame.p.z, ao, vis, means);
     }
     let s = wet_field(s_in, -pbr.V, rain);

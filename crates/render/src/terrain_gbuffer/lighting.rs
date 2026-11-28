@@ -73,12 +73,13 @@ impl Plugin for TerrainLightingPlugin {
     }
 }
 
-/// The main view's indirect light and its depth/normal guides, also
+/// The main view's field light and its depth/normal guides, also
 /// sampled by the forward field materials.
 #[derive(Resource, Default, Clone, ExtractResource)]
 pub(crate) struct FieldPreshading {
     pub diffuse: Option<Handle<Image>>,
     pub guides: Option<Handle<Image>>,
+    pub shadow: Option<Handle<Image>>,
     size: UVec2,
 }
 
@@ -101,9 +102,11 @@ fn resize_preshading(
     shared.size = size;
     shared.diffuse = Some(images.add(Image::new_target_texture(size.x, size.y, INDIRECT, None)));
     shared.guides = Some(images.add(Image::new_target_texture(size.x, size.y, FIELD_GUIDES, None)));
+    shared.shadow = Some(images.add(Image::new_target_texture(size.x, size.y, SHADOW, None)));
     for (_, material) in materials.iter_mut() {
         material.extension.field_diffuse = shared.diffuse.clone();
         material.extension.field_guides = shared.guides.clone();
+        material.extension.field_shadow = shared.shadow.clone();
     }
 }
 
@@ -155,7 +158,6 @@ impl RenderCommand<Opaque3d> for SkipDeferredTerrain {
 pub(super) struct LightingTargets {
     expand: CachedTexture,
     reduction: Vec<CachedTexture>,
-    shadow: CachedTexture,
     fog: CachedTexture,
 }
 
@@ -166,7 +168,6 @@ pub(super) fn allocate_targets(
     LightingTargets {
         expand: get("field_half_expand", EXPAND, size),
         reduction: allocate_reduction(size, &mut get),
-        shadow: get("field_half_shadow", SHADOW, size),
         fog: get("field_half_fog", INDIRECT, size),
     }
 }
@@ -318,6 +319,7 @@ pub(super) struct LightingPasses {
     compose_inputs: BindGroup,
     diffuse: TextureView,
     guides: TextureView,
+    shadow: TextureView,
 }
 
 fn prepare_lighting(
@@ -351,13 +353,17 @@ fn prepare_lighting(
     let Some(scene_normals) = prepass.normal_view() else {
         return;
     };
-    let (Some(diffuse), Some(guides)) = (
+    let (Some(diffuse), Some(guides), Some(shadow)) = (
         shared.diffuse.as_ref().and_then(|handle| images.get(handle)),
         shared.guides.as_ref().and_then(|handle| images.get(handle)),
+        shared.shadow.as_ref().and_then(|handle| images.get(handle)),
     ) else {
         return;
     };
-    if diffuse.texture.size() != out.half.texture.size() || guides.texture.size() != diffuse.texture.size() {
+    if diffuse.texture.size() != out.half.texture.size()
+        || guides.texture.size() != diffuse.texture.size()
+        || shadow.texture.size() != diffuse.texture.size()
+    {
         return;
     }
     let (Some(look), Some(noise), Some(cube), Some(clouds), Some(solar)) = scene else {
@@ -433,7 +439,7 @@ fn prepare_lighting(
     let mut compose_inputs = base.to_vec();
     compose_inputs.extend(
         BindGroupEntries::with_indices((
-            (8, &out_lit.shadow.default_view),
+            (8, &shadow.texture_view),
             (9, &out_lit.fog.default_view),
             (10, &diffuse.texture_view),
             (11, &guides.texture_view),
@@ -467,6 +473,7 @@ fn prepare_lighting(
         compose_inputs,
         diffuse: diffuse.texture_view.clone(),
         guides: guides.texture_view.clone(),
+        shadow: shadow.texture_view.clone(),
     });
 }
 
@@ -505,6 +512,7 @@ fn draw_lighting(
         compose_inputs,
         diffuse,
         guides,
+        shadow,
     } = passes;
     classify(&mut render, "field scene class half", half, scene_classes, &out.half);
     draw(
@@ -527,7 +535,7 @@ fn draw_lighting(
         &out.half,
         &[FIELD_CLASS, FIELD_OBJECT_CLASS],
         &[
-            color(&out_lit.shadow.default_view),
+            color(shadow),
             color(&out_lit.fog.default_view),
             color(diffuse),
             None,

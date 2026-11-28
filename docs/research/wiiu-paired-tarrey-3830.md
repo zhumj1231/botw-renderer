@@ -240,3 +240,53 @@ one code. Using mip 0 instead had a maximum error of 40 codes.
 The independent renderer already composes its 1/8-resolution
 Bloom level. Compare upstream HDR and Bloom production before
 changing the curve for this case.
+
+### Separate HDR, Bloom and field visibility
+
+Hold the verified curve and substitute scene HDR and Bloom one at
+a time between original E14248 and the independent compose draw.
+At 2,551 far-slope screen samples, require the reference and renderer
+depths to agree within max(0.1 m, 1%) and Expand red within eight codes.
+The independent HDR substitution costs 48.67 mean absolute codes
+per 10-bit RGB channel. The Bloom substitution costs 10.97. On sky
+samples the corresponding errors are 28.38 and 1.06.
+
+Pixel History at (873, 75) identifies original opaque field
+composition at E12855 and a later overlay at E13778. In the
+independent frame, the placed-object material draw at E24645
+contributes brighter radiance over the nearby field result.
+Recomposing four same-depth distant points with the original fog
+has little effect on their combined HDR error. The reconstruction
+uses half-resolution fog samples, so it estimates the effect without
+reproducing the full-resolution gather or later overlays.
+
+The object material reconstructed the pre-shaded environment
+light and recomputed sun visibility using only its dynamic
+shadow route. The revised object material also reconstructs
+the shared pre-shading shadow's red channel using the existing
+depth/normal footprint. That channel includes the baked far shadow
+and cloud attenuation. Other materials and missing guides use the
+existing forward lighting calculation.
+
+The repaired Vulkan capture writes the shared shadow target at
+E21662. RenderDoc lists 675 fragment read events, beginning with
+terrain composition at E21688 and followed by material draws.
+With the same 2,551 far-slope points, mean RGB absolute error
+falls from 52.95 to 45.75 in 10-bit output codes. Sky error remains
+29.10 codes. At (873, 75), renderer scene HDR moves from
+(0.435, 0.380, 0.215) to (0.279, 0.321, 0.180). The original
+opaque composite is (0.266, 0.320, 0.172) and the original HDR
+after its later overlay is (0.340, 0.395, 0.199). Keep those event
+boundaries distinct when making the next color comparison.
+
+The original overlay reads a 640×360 RGBA16F effect buffer copied
+at E13769. It gathers half-resolution R32F depth and samples
+full-resolution R16F depth to guide the upscale. E13778 writes
+to full-resolution HDR with RGB blend `src + dst × src.a`.
+At half pixel (436, 37), E13765 supplies the only color after the
+buffer clear, approximately (0.0843, 0.0894, 0.0349, 0.9629).
+The visually significant pass is thus outside the opaque field
+formula. Its originating effect or emitter is still open.
+
+A separate forward-mode Vulkan screenshot at 640×360 verified that
+materials still render when shared pre-shading is unavailable.

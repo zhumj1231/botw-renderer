@@ -104,6 +104,8 @@ pub struct ObjectShading {
     pub field_diffuse: Option<Handle<Image>>,
     #[texture(112, sample_type = "float", filterable = false)]
     pub field_guides: Option<Handle<Image>>,
+    #[texture(113, sample_type = "float", filterable = false)]
+    pub field_shadow: Option<Handle<Image>>,
     /// See [`ObjectParams::leaf`].
     pub leaf: Vec4,
     /// See [`ObjectParams::crown`].
@@ -220,6 +222,7 @@ impl ObjectShading {
             cube_mean: cube_mean.map(|m| m.0.clone()).unwrap_or_default(),
             field_diffuse: field.and_then(|f| f.diffuse.clone()),
             field_guides: field.and_then(|f| f.guides.clone()),
+            field_shadow: field.and_then(|f| f.shadow.clone()),
             leaf: Vec4::ZERO,
             crown: Vec4::ZERO,
             gloss: Vec4::new(0.0, GLOSS_WITHOUT_MAP, 0.0, 0.0),

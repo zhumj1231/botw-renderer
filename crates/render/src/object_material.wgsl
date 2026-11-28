@@ -45,7 +45,7 @@
 #import botw::clouds::cloud_shadow
 #import botw::look::{read_look_at, apply_haze, sky_cover, field_wetness_at}
 #import botw::deferred_light::{
-    FieldSurface, Frame, field_ambient_from_prepass, field_color_with_ambient, field_ssao,
+    FieldSurface, Frame, field_lighting_from_prepass, field_color_with_lighting, field_ssao,
     game_frame, main_light, main_light_source,
 }
 #import botw::normal_map::mapped_normal
@@ -85,6 +85,7 @@ struct ObjectIndices {
     cube_mean: u32,
     field_diffuse: u32,
     field_guides: u32,
+    field_shadow: u32,
 }
 @group(#{MATERIAL_BIND_GROUP}) @binding(109) var<storage> object_indices: array<ObjectIndices>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(110) var<storage> object_params: array<ObjectParams>;
@@ -101,6 +102,7 @@ struct ObjectIndices {
 @group(#{MATERIAL_BIND_GROUP}) @binding(108) var cube_means: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(111) var field_diffuse: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(112) var field_guides: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(113) var field_shadow: texture_2d<f32>;
 #endif
 
 // Whether the model's pixel is dissolved into its billboard.
@@ -279,7 +281,7 @@ fn fragment(
     let frame = game_frame(position_world_to_view(world), frag_coord_to_uv(in.position.xy));
     var surface: FieldSurface;
     var ao = 1.0;
-    var shared_ambient = vec4(0.0);
+    var shared_lighting = vec4(0.0, 0.0, 0.0, -1.0);
     if params.leaf.x > 0.5 {
         // Foliage (`field_leaf`): no metal, gloss or normal.w flag, so no
         // ambient occlusion or rim light.
@@ -300,20 +302,22 @@ fn fragment(
 #ifdef BINDLESS
             let diffuse = bindless_textures_2d[indices.field_diffuse];
             let guides = bindless_textures_2d[indices.field_guides];
+            let shadows = bindless_textures_2d[indices.field_shadow];
 #else
             let diffuse = field_diffuse;
             let guides = field_guides;
+            let shadows = field_shadow;
 #endif
-            shared_ambient = field_ambient_from_prepass(frame, surface.N, diffuse, guides);
+            shared_lighting = field_lighting_from_prepass(frame, surface.N, diffuse, guides, shadows);
         }
 #endif
-        if shared_ambient.w == 0.0 {
+        if shared_lighting.w < 0.0 {
             ao = field_ssao(frame, noise, main_light_source().index);
         }
     }
     let rain = vec2<f32>(field_wetness_at(look_t, look, world, cover, surface.N.y, surface.flag), look.weather[0].y);
-    var lit = field_color_with_ambient(pbr_input, surface, frame, 1.0 - shade, ao, cover, means,
-        rain, look.weather[0].w, shared_ambient);
+    var lit = field_color_with_lighting(pbr_input, surface, frame, 1.0 - shade, ao, cover, means,
+        rain, look.weather[0].w, shared_lighting);
     // Glowing parts: the game's G-buffer writes them into the scene colour,
     // which its main pass adds under the shaded colour times `src.a`, the
     // fog's transmittance squared (`field_hybrid` PS 32: bit 0 of the
