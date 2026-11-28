@@ -521,9 +521,7 @@ with a 160-wide R16F PS9 input has these rounded values:
 | 123839 | E10296 | (0.09120, 0.36634, 0.72374, 0.90000) |
 
 The live route must carry this palette independently of the
-particle set alpha. The mask stage also needs the custom vertex
-program's animated UV output and intensity before it can use the
-captured-input-tested fragment path.
+particle set alpha.
 
 ### Camera-relative mask emitter
 
@@ -537,6 +535,32 @@ half extents and fade fractions at float indices 52 and 92. This
 provides an independent check on the emitter identification and
 supports reusing the area transform in
 `crates/render/src/effects/run.rs::extra_for`.
+
+The mask shader's Sem8 is the mesh UV, centered at 0.5 and scaled
+with the slot-0 static parameters, then scrolled per particle:
+
+```text
+age = emitter_frame - particle_birth_frame
+scroll = age * static[0x2c0].xy + static[0x2c8].xy
+         + static[0x2d0].xy * (1 - 2 * particle_random.xy)
+Sem8.xy = (mesh_uv - 0.5) * static[0x2e0].xy - scroll + 0.5
+```
+
+Frame 3830 has scale (1.5, 1.5), scroll speed (0, 0.001) per
+emitter frame, initial scroll (0, 0), and random amplitude (1, 1).
+Reconstructing in f32 from raw instance attributes and mesh UVs
+matches all 660 coordinates on 20 draws with valid post-VS
+positions. The live particle vertex program uses the formula for
+the `ps_47897e0ca792` family.
+
+An instrumented vertex replay exports the three wrapped EP04
+fractions. For each axis, the fade is
+`saturate((1 - abs(2 * wrapped - 1)) / edge_width)`. The product
+of the three fades times the dynamic emitter alpha reproduces
+Sem4.x across all 20 draws with positive fade, with a maximum
+absolute error of 2.34e-8 in the CPU reconstruction. This is the
+same fade already computed in the ordinary live particle vertex
+path.
 
 The later `Haze_Far_simple_new` definition has no EP04 block.
 Validate its placement and palette upload separately. The mask

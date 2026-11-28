@@ -121,7 +121,10 @@ both captured targets exactly. The renderer's independent indexed
 Vulkan passes also reproduce both active targets exactly with
 `BOTW_HAZE_RASTER` and the exported post-VS input. Connect the live
 emitter state to these passes, using the volume mask's unmerged
-unit-0 image and the reduced buffer's live depth guides.
+unit-0 image and the reduced buffer's live depth guides. The live
+vertex shader now has the mask emitter's verified animated mesh
+UV. The existing EP04 fade matches Sem4.x. Route that emitter to
+the R16F pass and the haze emitter to RGBA16F.
 The same-input display curve is verified at the sampled points.
 The weather replays are additional validation scenes.
 

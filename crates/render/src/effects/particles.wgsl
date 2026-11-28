@@ -62,7 +62,7 @@ struct DrawParams {
     // Texture slots present (x), distance-size mode (y), squared (bits of w).
     textures: vec4<u32>,
     // Vertices per particle (4: the quad), custom shader index, alpha
-    // test on (1), the ported program family (0 standard, 1 clouds).
+    // test on (1), the ported program family (0 standard, 1 clouds, 2 volume mask add).
     shape: vec4<u32>,
     // Each slot's component selection (a byte per channel).
     swizzles: vec4<u32>,
@@ -286,6 +286,13 @@ fn slot_uv(s: u32, corner: vec2<f32>, age: f32, life: f32, r: vec4<f32>) -> vec2
     let u = x * (scale.x - 1.0) + rep.x * (x + 0.5 + col) - scroll.x;
     let v = y * (1.0 - scale.y) - rep.y * (y - 0.5 - row) - scroll.y;
     return vec2<f32>(u, v);
+}
+
+// `vs_6681f1af414d` emits the primitive's texture coordinates in Sem8.
+// The two axes take separate components of sysRandomAttr.
+fn volume_mask_uv(uv: vec2<f32>, age: f32, random: vec2<f32>) -> vec2<f32> {
+    let scroll = age * sv2(0x2c0u) + (sv2(0x2c8u) + sv2(0x2d0u) * (1.0 - 2.0 * random));
+    return (uv - 0.5) * sv2(0x2e0u) - scroll + 0.5;
 }
 
 struct Vertex {
@@ -574,7 +581,11 @@ fn vertex(in: Vertex) -> Varyings {
     out.factors = vec4<f32>(factor, param.x, z, 0.0);
     out.color0 = vec4<f32>(c0 * dyn.color0.rgb * color_scale * p.color0.rgb, a0 * dyn.color0.a * p.color0.a);
     out.color1 = vec4<f32>(c1 * dyn.color1.rgb * color_scale * p.color1.rgb, a1 * dyn.color1.a * p.color1.a);
-    out.uv01 = vec4<f32>(slot_uv(0u, corner, age, life, r), slot_uv(1u, corner, age, life, r));
+    var uv0 = slot_uv(0u, corner, age, life, r);
+    if draw.shape.w == 2u {
+        uv0 = volume_mask_uv(in.uv, age, r.xy);
+    }
+    out.uv01 = vec4<f32>(uv0, slot_uv(1u, corner, age, life, r));
     out.uv2 = slot_uv(2u, corner, age, life, r);
     out.vertex_color = in.color;
     out.normal = n;

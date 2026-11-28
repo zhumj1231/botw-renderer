@@ -118,6 +118,48 @@ def hdr_deltas(baseline, bypass, full_depth):
     }
 
 
+def check_mask_uv(replay, actions, event, vertices):
+    rows = list(struct.iter_unpack("<24f", vertices))
+    if not any(row[3] > 0 for row in rows):
+        return 0
+    pipe = replay.GetPipelineState()
+    attributes = {entry.name: entry for entry in pipe.GetVertexInputs() if entry.used}
+    buffers = pipe.GetVBuffers()
+    action = actions[event]
+
+    def read_attribute(semantic, count):
+        attribute = attributes["attrDataSem%d" % semantic]
+        bound = buffers[attribute.vertexBuffer]
+        first = action.instanceOffset if attribute.perInstance else action.baseVertex
+        start = bound.byteOffset + attribute.byteOffset + first * bound.byteStride
+        data = bytes(replay.GetBufferData(bound.resourceId, start, (count - 1) * bound.byteStride + 16))
+        return [struct.unpack_from(">4f", data, i * bound.byteStride) for i in range(count)]
+
+    def f32(value):
+        return struct.unpack("<f", struct.pack("<f", value))[0]
+
+    block = pipe.GetConstantBlocks(rd.ShaderStage.Vertex)[0].descriptor
+    data = bytes(replay.GetBufferData(block.resource, block.byteOffset, 4))
+    frame = struct.unpack("<f", data)[0]
+    age = f32(frame - read_attribute(7, 1)[0][3])
+    random = read_attribute(10, 1)[0]
+    for row, uv in zip(rows, read_attribute(13, len(rows))):
+        scroll_x = f32(1.0 - f32(2.0 * random[0]))
+        scroll_y = f32(f32(age * f32(0.001)) + f32(1.0 - f32(2.0 * random[1])))
+        result = tuple(
+            f32(f32(f32(1.5 * f32(axis - 0.5)) - scroll) + 0.5)
+            for axis, scroll in zip(uv, (scroll_x, scroll_y))
+        )
+        assert result == row[20:22], (event, result, row[20:22])
+    return len(rows)
+
+
+def flatten(actions):
+    for action in actions:
+        yield action
+        yield from flatten(action.children)
+
+
 def export_draws(replay, out, textures, baseline):
     """Keep post-VS inputs in a local fixture for an independent raster pass."""
     out.mkdir(parents=True, exist_ok=True)
@@ -125,7 +167,9 @@ def export_draws(replay, out, textures, baseline):
         (out / (key + ".bin")).write_bytes(baseline[key])
 
     events = list(range(10745, 10820, 2)) + [13765]
+    actions = {action.eventId: action for action in flatten(replay.GetRootActions())}
     draws = []
+    exact_uv_vertices = 0
     for event in events:
         replay.SetFrameEvent(event, True)
         pipe = replay.GetPipelineState()
@@ -144,6 +188,8 @@ def export_draws(replay, out, textures, baseline):
             vertex_count * mesh.vertexByteStride,
         ))
         assert len(vertices) == vertex_count * mesh.vertexByteStride, event
+        if event < 13765:
+            exact_uv_vertices += check_mask_uv(replay, actions, event, vertices)
         (out / ("vertices-%d.bin" % event)).write_bytes(vertices)
         (out / ("indices-%d.bin" % event)).write_bytes(indices)
         vp = pipe.GetViewport(0)
@@ -176,7 +222,7 @@ def export_draws(replay, out, textures, baseline):
             "mips": tex.mips,
         })
     (out / "draws.json").write_text(json.dumps({"draws": draws, "inputs": inputs}, indent=2))
-    return len(draws)
+    return len(draws), exact_uv_vertices
 
 
 def compare_renderer(replay, fixture):
@@ -185,11 +231,6 @@ def compare_renderer(replay, fixture):
         "haze_mask": ("mask_final.bin", 160, 90, 192, 2),
         "haze_effect": ("effect_haze.bin", 640, 360, 640, 8),
     }
-
-    def flatten(actions):
-        for action in actions:
-            yield action
-            yield from flatten(action.children)
 
     report = {}
     for action in reversed(list(flatten(replay.GetRootActions()))):
@@ -280,7 +321,9 @@ def compare(replay):
     }
     fixture = os.environ.get("BOTW_HAZE_EXPORT")
     if fixture:
-        report["exported_draws"] = export_draws(replay, Path(fixture), textures, baseline)
+        draws, exact_uv_vertices = export_draws(replay, Path(fixture), textures, baseline)
+        report["exported_draws"] = draws
+        report["exact_mask_uv_vertices"] = exact_uv_vertices
     return report
 
 
