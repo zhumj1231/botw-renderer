@@ -311,11 +311,48 @@ The effect buffer alpha therefore carries the surviving fraction of scene
 HDR through those blends. A constant fog color would discard the observed
 variation from the earlier mask and mesh draws.
 
-To isolate reconstruction error, use the captured effect buffer, its two
-depth guides and the pre-composite HDR as inputs, and compare the result
-against E13778. For an A/B of this particular draw, repeat with the effect
-buffer sampled immediately before E13765. The mask asset, the mesh
-producer, and their frame-to-frame inputs still need identification.
+### Full-frame E13778 reconstruction and E13765 A/B
+
+The [RenderDoc exporter](../../tools/research/renderdoc_overlay_ab_export.py)
+reads the frame 3830 buffers and fragment constants. Set
+`BOTW_FOG_ORIGINAL` to the capture path and `BOTW_FOG_OUT` to an existing
+output directory. Run the exporter with `qrenderdoc --python=<script>`,
+then run `python tools/research/compare_overlay_ab.py <output directory>`.
+
+For normalized pixel-center UV `uv`, start with the fractional position of
+`uv × halfExtent − 0.5`. Gather the four half-depth taps in that footprint
+and compute absolute differences from the full-resolution depth `z`.
+Let `l`, `r`, `t`, and `b` be the sums on the left, right, top, and bottom.
+Add `(l − r, t − b) × 4.2890134 / (z + 0.0000400016)` to the fractional
+position and clamp it to the four-tap footprint. Bilinearly sample RGBA
+there and apply `effect.rgb + scene.rgb × effect.a`. The fragment shader
+adds 0.0001 to the depth-gather UV. At 1280×720 that offset preserves the
+four-tap footprint of each full-resolution pixel center.
+
+Against the captured R11G11B10F HDR, the CPU reconstruction yields
+0.000167 mean absolute error per linear HDR channel for all 921,600
+pixels, with exact RGB for 89.26% of pixels using truncation to the
+destination format. Truncation was chosen empirically for this Vulkan
+replay. The maximum error is 0.5 at a bright pixel whose captured blue
+channel is 22.0, one destination code above the reconstruction.
+On the 3,476 sky/geometry edge pixels defined below, plain bilinear
+upsampling gives 0.01555 mean error per channel. The depth-guided
+position reduces it to 0.000154 on the same pixels.
+
+Holding the guides and pre-composite HDR fixed, replacing the effect input
+with the active 640×360 area immediately before E13765 gives these
+mean signed linear HDR differences (with the draw minus without it):
+
+| Sample region | Pixels | ΔR | ΔG | ΔB |
+| --- | ---: | ---: | ---: | ---: |
+| Far-slope box, x 848–894 and y 64–83 | 940 | 0.0737 | 0.0773 | 0.0283 |
+| Sky, full guide equals 1 | 37,370 | 0.0576 | 0.0583 | 0.0184 |
+| Sky/geometry edges, half gather spans below 0.999 to at least 0.99999 | 3,476 | 0.0531 | 0.0577 | 0.0201 |
+| All pixels | 921,600 | 0.0237 | 0.0270 | 0.0098 |
+
+Use the full-frame comparison as the checkpoint for integrating the HDR
+composite. The mask asset, mesh producer and frame-to-frame inputs still
+need identification.
 
 A separate forward-mode Vulkan screenshot at 640×360 verified that
 materials still render when shared pre-shading is unavailable.
