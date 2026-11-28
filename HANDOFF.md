@@ -131,6 +131,12 @@ shader and raster comparisons.
 The same-input display curve is verified at the sampled points.
 The weather replays are additional validation scenes.
 
+The new [fixed-camera day and night renderer comparison](docs/research/wiiu-deferred-shading.md#independent-renderer-comparison-of-the-fixed-camera-pair)
+isolates the remaining near-night shadow bias and the missing
+contact AO coverage. Prioritize those measurements and split the
+daylight sky error at the haze and HDR boundaries. Native frames
+4188 and 12902 are two time-of-day checkpoints.
+
 1. **Close the outdoor clear-day baseline.** Use frame 3830 for the
    [terrain shadow and SSAO readbacks](docs/research/wiiu-deferred-shading.md#clear-day-terrain-expand-at-eid-9949).
    Use the same capture to check the AO silhouette and the reconstructed

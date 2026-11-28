@@ -175,6 +175,61 @@ to `(0.024414, 0.116211, 0.111328)`. Display RGB codes move from
 input signal changes with time of day while the tested display
 draw's curve and controls match.
 
+### Independent renderer comparison of the fixed-camera pair
+
+The native inverse-view rows give the following renderer settings.
+Both runs use `--projection 50,1,25000 --weather bluesky --resolution
+1280x720 --terrain-deferred`, the baked Tarrey Town story flag fixture,
+and `BOTW_HAZE_LIVE=0.7` without capture replay inputs. The HUD time
+gives the comparison time, while the renderer's particles and clouds
+advance normally until the screenshot.
+
+| Native frame | `--time` | Renderer `--camera x,y,z,yaw,pitch` |
+| --- | --- | --- |
+| 4188 | 17:30 | `3945.142578125,235.181243896484,-1615.53063964844,-146.162916495,1.044071619` |
+| 12902 | 22:20 | `3945.14282226562,235.181228637695,-1615.53063964844,-146.162256208,1.044089445` |
+
+In [the comparison script](../../tools/research/validate_day_night_stages.py),
+set `BOTW_DAY_NIGHT_DIR` to the native capture directory and
+`BOTW_FOG_OUT` to the directory containing
+`renderer-paired-4188_capture.rdc` and
+`renderer-paired-12902_capture.rdc`. The script checks the native
+and renderer class-4 intersection. It accepts a sample when its
+camera depths differ by at most the larger of 0.5 m or 2% of the
+native depth. Many native class-4 samples have a different renderer
+classification, so these statistics apply to the matched subset.
+
+| Mean absolute error | 17:30 | 22:20 |
+| --- | ---: | ---: |
+| Matched half-resolution samples (count) | 56,463 | 56,844 |
+| Expand shadow (8-bit codes) | 5.09 | 20.18 |
+| Expand AO (8-bit codes, all matched pixels) | 3.58 | 2.95 |
+| Expand AO on the union of pixels where either capture is below neutral 255 (8-bit codes) | 124.03 | 115.91 |
+| Pre-shading fog (linear RGB per channel) | 0.02411 | 0.00223 |
+| Pre-shading diffuse (linear RGB per channel) | 0.03364 | 0.02125 |
+| Display-stage input HDR (linear RGB per channel) | 0.05630 | 0.03043 |
+
+At night, the below-20 m Expand samples have mean absolute error
+20.52 codes and the renderer is 17.23 codes brighter on average.
+The over-120 m subset is only 166 samples and its mean bias is
+0.50 codes. This points the next check toward the near nighttime
+shadow inputs. In both frames fewer renderer pixels have active AO
+(day 299 vs 1,509 native, night 300 vs 1,325 native). The open
+ground hides this difference in the all-pixel AO average.
+
+At the sky checkpoint (640, 45) the display-input HDR is
+`(0.379, 0.488, 0.352)` native vs `(0.737, 0.839, 0.413)`
+renderer at 17:30, and `(0.024, 0.116, 0.111)` native vs
+`(0.015, 0.141, 0.136)` renderer at 22:20. This sample is
+outside the depth-matched terrain statistics. At 17:30, the
+pre-overlay sky is `(0.332, 0.465, 0.383)` native at E13389 and
+`(0.331, 0.419, 0.266)` in the renderer at E24350. The native
+overlay adds 0.047 red and 0.023 green at this pixel, while the
+renderer overlay adds 0.406 red and 0.420 green. The daytime red
+and green discrepancy here starts at the overlay. Compare the
+live VFog intensity and effect target inputs before tuning sky
+scattering or exposure.
+
 ## Outdoor material paths
 
 The archived frame above establishes the shared render targets and the
