@@ -8,6 +8,8 @@ use bevy::render::render_resource::binding_types::{sampler, texture_2d};
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 
+use super::haze_raster::HazeRasterReplay;
+
 const SHADER: Handle<Shader> = uuid_handle!("c7bbb279-02d8-431d-95fc-ee17763f8fef");
 const FRAME: Extent3d = Extent3d {
     width: 1280,
@@ -30,6 +32,7 @@ pub(super) struct OverlayReplay {
     pipeline: CachedRenderPipelineId,
     inputs: BindGroup,
     output: TextureView,
+    raster: Option<HazeRasterReplay>,
 }
 
 pub(super) fn init(
@@ -43,6 +46,18 @@ pub(super) fn init(
         return;
     };
     let directory = std::path::Path::new(&path);
+    let raster = match std::env::var_os("BOTW_HAZE_RASTER") {
+        Some(fixture) => {
+            match HazeRasterReplay::load(std::path::Path::new(&fixture), &device, &queue, &cache) {
+                Ok(raster) => Some(raster),
+                Err(failure) => {
+                    error!("haze raster fixture: {failure}");
+                    return;
+                }
+            }
+        }
+        None => None,
+    };
     let views = [
         ("hdr-pre", FRAME, TextureFormat::Rg11b10Ufloat, 4),
         ("effect-post", HALF, FORMAT, 8),
@@ -121,7 +136,13 @@ pub(super) fn init(
     let inputs = device.create_bind_group(
         "hdr_overlay_inputs",
         &cache.get_bind_group_layout(&layout),
-        &BindGroupEntries::sequential((&scene, &effect, &full_depth, &half_depth, &linear_clamp)),
+        &BindGroupEntries::sequential((
+            &scene,
+            raster.as_ref().map_or(&effect, HazeRasterReplay::effect),
+            &full_depth,
+            &half_depth,
+            &linear_clamp,
+        )),
     );
     let output = texture(
         &device,
@@ -151,6 +172,7 @@ pub(super) fn init(
         pipeline,
         inputs,
         output,
+        raster,
     });
 }
 
@@ -165,6 +187,9 @@ impl OverlayReplay {
             return None;
         }
         let pipeline = cache.get_render_pipeline(self.pipeline)?;
+        if let Some(raster) = &self.raster {
+            raster.draw(encoder, cache)?;
+        }
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("hdr_overlay_composite"),
             color_attachments: &[Some(RenderPassColorAttachment {

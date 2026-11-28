@@ -179,6 +179,50 @@ def export_draws(replay, out, textures, baseline):
     return len(draws)
 
 
+def compare_renderer(replay, fixture):
+    textures = {t.resourceId: t for t in replay.GetTextures()}
+    pending = {
+        "haze_mask": ("mask_final.bin", 160, 90, 192, 2),
+        "haze_effect": ("effect_haze.bin", 640, 360, 640, 8),
+    }
+
+    def flatten(actions):
+        for action in actions:
+            yield action
+            yield from flatten(action.children)
+
+    report = {}
+    for action in reversed(list(flatten(replay.GetRootActions()))):
+        if not (action.flags & rd.ActionFlags.Drawcall) or action.numIndices not in (144, 480):
+            continue
+        replay.SetFrameEvent(action.eventId, False)
+        pipe = replay.GetPipelineState()
+        shader = pipe.GetShaderReflection(rd.ShaderStage.Pixel)
+        if not shader or shader.entryPoint not in pending:
+            continue
+        name, w, h, pitch, stride = pending.pop(shader.entryPoint)
+        target = textures[pipe.GetOutputTargets()[0].resource]
+        assert (target.width, target.height) == (w, h)
+        replay.SetFrameEvent(action.eventId, True)
+        gpu = bytes(replay.GetTextureData(target.resourceId, rd.Subresource(0, 0, 0)))
+        padded = (fixture / name).read_bytes()
+        row_bytes = pitch * stride
+        native = b"".join(padded[row * row_bytes:row * row_bytes + w * stride] for row in range(h))
+        assert len(gpu) == len(native) == w * h * stride
+        differences = [abs(a - b) for (a,), (b,) in
+                       zip(struct.iter_unpack("<e", native), struct.iter_unpack("<e", gpu))]
+        report[shader.entryPoint] = {
+            "event": action.eventId, "pixels": w * h,
+            "changed_texels": changed(native, gpu, stride),
+            "mean_abs": sum(differences) / len(differences),
+            "max_abs": max(differences),
+        }
+        (fixture / ("renderer-" + name)).write_bytes(gpu)
+        if not pending:
+            return report
+    raise RuntimeError("Missing renderer pass: " + ", ".join(pending))
+
+
 def compare(replay):
     textures = {str(t.resourceId): t for t in replay.GetTextures()}
 
@@ -246,10 +290,13 @@ with (out / "haze-mask-ab-verified.log").open("w", encoding="utf-8", buffering=1
     capture = rd.OpenCaptureFile()
     replay = None
     try:
-        assert capture.OpenFile(os.environ["BOTW_FOG_ORIGINAL"], "", None) == rd.ResultCode.Succeeded
+        renderer = os.environ.get("BOTW_HAZE_RENDERER_CAPTURE")
+        capture_path = renderer or os.environ["BOTW_FOG_ORIGINAL"]
+        assert capture.OpenFile(capture_path, "", None) == rd.ResultCode.Succeeded
         status, replay = capture.OpenCapture(rd.ReplayOptions(), None)
         assert status == rd.ResultCode.Succeeded, status
-        print(json.dumps(compare(replay), indent=2))
+        report = compare_renderer(replay, Path(os.environ["BOTW_HAZE_EXPORT"])) if renderer else compare(replay)
+        print(json.dumps(report, indent=2))
     except Exception:
         traceback.print_exc()
         sys.exit(1)

@@ -42,6 +42,7 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
 use crate::daynight::{Environment, Sky};
 
+mod haze_raster;
 mod overlay;
 
 const SHADER: Handle<Shader> = uuid_handle!("5b0e8c3a-2f47-4d19-9a6e-71c4d2e8b035");
@@ -74,6 +75,7 @@ impl Plugin for PostFxPlugin {
     fn build(&self, app: &mut App) {
         load_internal_asset!(app, SHADER, "postfx.wgsl", Shader::from_wgsl);
         overlay::register_shader(app);
+        haze_raster::register_shader(app);
         app.insert_resource(ToneChoice::from_env())
             .add_plugins((
                 ExtractComponentPlugin::<PostFx>::default(),

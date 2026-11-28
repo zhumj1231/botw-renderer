@@ -481,6 +481,22 @@ The Vulkan viewports have negative height and both pipelines use
 counterclockwise front faces. Keep those conventions when replaying
 the fixture on an independent raster path.
 
+### Independent indexed Vulkan raster replay
+
+Set `BOTW_HAZE_RASTER` to the exported fixture directory and
+`BOTW_OVERLAY_REPLAY` to the overlay readback directory. The renderer
+uploads the mask and effect bases, redraws the 38 indexed mask draws
+with the BC4 mip chain, and draws E13765's mesh using the resulting
+R16F mask. Its own WGSL shaders and wgpu Vulkan render passes provide
+the effect texture to the existing HDR composite.
+
+Set `BOTW_HAZE_RENDERER_CAPTURE` to the resulting renderer capture
+and `BOTW_HAZE_EXPORT` to the fixture directory, then run the same
+RenderDoc comparison script. The renderer's last mask draw at E27278
+matches all 14,400 active R16F texels exactly. Its haze draw at E27295
+matches all 230,400 active RGBA16F texels exactly. The capture's padded
+rows are excluded from both comparisons.
+
 ### Camera-relative mask emitter
 
 The previous [EP04 reconstruction](eft-custom-blocks.md#2-plugin-block-ep04-area-loop-f)

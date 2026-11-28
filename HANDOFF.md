@@ -117,10 +117,11 @@ with the four original inputs. The 160×90 mask draws match
 `VolumeMaskAdd01test/Haze_Far` and their shader swizzle, blend and
 downstream contribution are verified. E13765's mesh matches
 `Haze_Far_simple_new`. Replacement fragment shaders reproduce
-both captured targets exactly. Use `BOTW_HAZE_EXPORT` with the
-mask A/B script to get all 39 indexed post-VS streams and compare
-independent Vulkan raster passes against the R16F and RGBA16F
-snapshots, then drive the passes with live emitter state.
+both captured targets exactly. The renderer's independent indexed
+Vulkan passes also reproduce both active targets exactly with
+`BOTW_HAZE_RASTER` and the exported post-VS input. Connect the live
+emitter state to these passes, using the volume mask's unmerged
+unit-0 image and the reduced buffer's live depth guides.
 The same-input display curve is verified at the sampled points.
 The weather replays are additional validation scenes.
 
