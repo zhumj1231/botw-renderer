@@ -422,15 +422,14 @@ fn game_layer(
 // The game draws the clouds into its reduced buffer (gsys "ReducedBuffer",
 // half the frame each way; docs/research/wiiu-sky-resources.md, "Reduced
 // cloud buffer") over the half depth that PS 109 copies from the frame's
-// depth at the point of each of its pixels (point filter, the full texel
-// under the pixel's uv). The dome lies behind everything, so a cloud is
+// upper-left sample in each 2x2 full-resolution block. The dome lies
+// behind everything, so a cloud is
 // drawn where that texel holds no scene (Bevy's reversed depth is 0 there).
 // The target starts at (0, 0, 0, 1) and blends `src + dst·(1 − α)` into the
 // colour and `dst·(1 − α)` into the alpha: what shows of the frame.
 @fragment
 fn reduced(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let frame = vec2<f32>(textureDimensions(scene_depth));
-    let texel = min(vec2<i32>(in.uv * frame), vec2<i32>(frame) - 1);
+    let texel = 2 * vec2<i32>(in.position.xy);
     let scene = textureLoad(scene_depth, texel, 0) > 0.0;
     let ndc = vec2(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
     let near = view.world_from_clip * vec4(ndc, 1.0, 1.0);

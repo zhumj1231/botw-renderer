@@ -1,6 +1,5 @@
 //! Live geometry path for the camera's two haze emitter programs.
 
-use bevy::core_pipeline::FullscreenShader;
 use bevy::ecs::system::SystemParam;
 use bevy::mesh::VertexBufferLayout;
 use bevy::prelude::*;
@@ -12,29 +11,26 @@ use bevy::render::render_resource::binding_types::{
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::storage::GpuShaderBuffer;
-use bevy::render::texture::{CachedTexture, GpuImage, TextureCache};
+use bevy::render::texture::{GpuImage, TextureCache};
 use bevy::render::view::{ViewUniform, ViewUniformOffset, ViewUniforms};
 use bevy::shader::ShaderDefVal;
 
-use super::overlay::{self, LiveBases};
 use crate::effects::{DrawParams, HazeDraws, HazeStage, PARTICLE_SHADER};
 
 const MASK: TextureFormat = TextureFormat::R16Float;
 const HDR: TextureFormat = TextureFormat::Rgba16Float;
 
 #[derive(Resource)]
-pub(super) struct LiveHaze {
+pub(crate) struct LiveHaze {
     view: BindGroupLayoutDescriptor,
     emitter: BindGroupLayoutDescriptor,
-    composite: BindGroupLayoutDescriptor,
     mask: CachedRenderPipelineId,
     effect: CachedRenderPipelineId,
-    compose: CachedRenderPipelineId,
     linear: Sampler,
 }
 
 #[derive(SystemParam)]
-pub(super) struct Inputs<'w> {
+pub(crate) struct Inputs<'w> {
     draws: Option<Res<'w, HazeDraws>>,
     meshes: Res<'w, RenderAssets<RenderMesh>>,
     allocator: Res<'w, MeshAllocator>,
@@ -42,13 +38,10 @@ pub(super) struct Inputs<'w> {
     views: Res<'w, ViewUniforms>,
 }
 
-pub(super) fn init(
-    mut commands: Commands,
-    device: Res<RenderDevice>,
-    fullscreen: Res<FullscreenShader>,
-    cache: Res<PipelineCache>,
-) {
-    if std::env::var_os("BOTW_HAZE_LIVE").is_none() {
+pub(super) fn init(mut commands: Commands, device: Res<RenderDevice>, cache: Res<PipelineCache>) {
+    if std::env::var_os("BOTW_HAZE_LIVE").is_none()
+        || std::env::var_os("BOTW_OVERLAY_REPLAY").is_some()
+    {
         return;
     }
     let float = |filterable| texture_2d(TextureSampleType::Float { filterable });
@@ -71,20 +64,6 @@ pub(super) fn init(
                 (12, float(true)),
                 (13, sampler(SamplerBindingType::Filtering)),
                 (14, uniform_buffer::<Vec4>(false)),
-            ),
-        ),
-    );
-    let composite = BindGroupLayoutDescriptor::new(
-        "live_haze_composite",
-        &BindGroupLayoutEntries::sequential(
-            ShaderStages::FRAGMENT,
-            (
-                float(false),
-                float(true),
-                float(false),
-                float(false),
-                sampler(SamplerBindingType::Filtering),
-                uniform_buffer::<Vec4>(false),
             ),
         ),
     );
@@ -167,36 +146,18 @@ pub(super) fn init(
     };
     let mask = pipeline("live_haze_mask", MASK, None);
     let effect = pipeline("live_haze_effect", HDR, Some(Face::Front));
-    let compose = cache.queue_render_pipeline(RenderPipelineDescriptor {
-        label: Some("live_haze_composite".into()),
-        layout: vec![composite.clone()],
-        vertex: fullscreen.to_vertex_state(),
-        fragment: Some(FragmentState {
-            shader: overlay::SHADER,
-            entry_point: Some("composite_overlay".into()),
-            targets: vec![Some(ColorTargetState {
-                format: HDR,
-                blend: None,
-                write_mask: ColorWrites::ALL,
-            })],
-            ..default()
-        }),
-        ..default()
-    });
     commands.insert_resource(LiveHaze {
         view,
         emitter,
-        composite,
         mask,
         effect,
-        compose,
         linear,
     });
 }
 
 impl LiveHaze {
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn draw(
+    pub(crate) fn draw(
         &self,
         encoder: &mut CommandEncoder,
         device: &RenderDevice,
@@ -206,60 +167,30 @@ impl LiveHaze {
         images: &RenderAssets<GpuImage>,
         inputs: &Inputs,
         view_offset: &ViewUniformOffset,
-        bases: &LiveBases,
-        frame: Extent3d,
+        base_mask: &Texture,
+        effect: &TextureView,
         palette: Vec4,
-    ) -> Option<TextureView> {
+    ) -> Option<()> {
         let draws = &inputs.draws.as_ref()?.0;
         if !draws.iter().any(|draw| draw.0 == HazeStage::Effect) {
             return None;
         }
-        let (mask_pipeline, effect_pipeline, compose) = (
-            cache.get_render_pipeline(self.mask)?,
-            cache.get_render_pipeline(self.effect)?,
-            cache.get_render_pipeline(self.compose)?,
-        );
-        let target = |textures: &mut TextureCache, label, size, format, extra| {
-            textures.get(
-                device,
-                TextureDescriptor {
-                    label: Some(label),
-                    size,
-                    dimension: TextureDimension::D2,
-                    format,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    usage: TextureUsages::RENDER_ATTACHMENT
-                        | TextureUsages::TEXTURE_BINDING
-                        | extra,
-                    view_formats: &[],
-                },
-            )
-        };
-        let mask = target(
-            texture_cache,
-            "live_haze_mask",
-            bases.mask.size(),
-            MASK,
-            TextureUsages::COPY_DST,
-        );
-        let effect = target(
-            texture_cache,
-            "live_haze_effect",
-            Extent3d {
-                width: (frame.width / 2).max(1),
-                height: (frame.height / 2).max(1),
-                depth_or_array_layers: 1,
+        let mask_pipeline = cache.get_render_pipeline(self.mask)?;
+        let effect_pipeline = cache.get_render_pipeline(self.effect)?;
+        let mask = texture_cache.get(
+            device,
+            TextureDescriptor {
+                label: Some("live_haze_mask"),
+                size: base_mask.size(),
+                dimension: TextureDimension::D2,
+                format: MASK,
+                mip_level_count: 1,
+                sample_count: 1,
+                usage: TextureUsages::RENDER_ATTACHMENT
+                    | TextureUsages::TEXTURE_BINDING
+                    | TextureUsages::COPY_DST,
+                view_formats: &[],
             },
-            HDR,
-            TextureUsages::empty(),
-        );
-        let hdr = target(
-            texture_cache,
-            "live_haze_hdr",
-            frame,
-            HDR,
-            TextureUsages::empty(),
         );
         let view_group = device.create_bind_group(
             "live_haze_camera",
@@ -272,15 +203,14 @@ impl LiveHaze {
             u
         };
         let palette = uniform(palette);
-        let edge = uniform(bases.edge_adjust);
         let emitter_layout = cache.get_bind_group_layout(&self.emitter);
         // The earlier scene-fog pass retains its input. Modify a separate copy.
         encoder.copy_texture_to_texture(
-            bases.mask.as_image_copy(),
+            base_mask.as_image_copy(),
             mask.texture.as_image_copy(),
-            bases.mask.size(),
+            base_mask.size(),
         );
-        let mut draw_pass = |stage, pipeline: &RenderPipeline, target: &CachedTexture, load| {
+        let mut draw_pass = |stage, pipeline: &RenderPipeline, target: &TextureView| {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some(if stage == HazeStage::Mask {
                     "live_haze_mask"
@@ -288,11 +218,11 @@ impl LiveHaze {
                     "live_haze_effect"
                 }),
                 color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &target.default_view,
+                    view: target,
                     depth_slice: None,
                     resolve_target: None,
                     ops: Operations {
-                        load,
+                        load: LoadOp::Load,
                         store: StoreOp::Store,
                     },
                 })],
@@ -358,42 +288,8 @@ impl LiveHaze {
                 );
             }
         };
-        draw_pass(HazeStage::Mask, mask_pipeline, &mask, LoadOp::Load);
-        draw_pass(
-            HazeStage::Effect,
-            effect_pipeline,
-            &effect,
-            LoadOp::Clear(LinearRgba::BLACK.into()),
-        );
-        let group = device.create_bind_group(
-            "live_haze_composite",
-            &cache.get_bind_group_layout(&self.composite),
-            &BindGroupEntries::sequential((
-                bases.scene,
-                &effect.default_view,
-                bases.full_depth,
-                bases.half_depth,
-                &self.linear,
-                edge.binding()?,
-            )),
-        );
-        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-            label: Some("live_haze_composite"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: &hdr.default_view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: Operations {
-                    load: LoadOp::Clear(LinearRgba::BLACK.into()),
-                    store: StoreOp::Store,
-                },
-            })],
-            ..default()
-        });
-        pass.set_pipeline(compose);
-        pass.set_bind_group(0, &group, &[]);
-        pass.draw(0..3, 0..1);
-        drop(pass);
-        Some(hdr.default_view)
+        draw_pass(HazeStage::Mask, mask_pipeline, &mask.default_view);
+        draw_pass(HazeStage::Effect, effect_pipeline, effect);
+        Some(())
     }
 }

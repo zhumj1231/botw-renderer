@@ -46,6 +46,13 @@ attachment formats need a capture or a code and resource trace.
   distinguish viewport sizes from host allocations and valid layer ranges
   from full view ranges. Check the output format and color space before
   comparing pixels. [RenderDoc repository](https://github.com/baldurk/renderdoc)
+- **BOTW-Native-SteamDeck** (Wii U 1.5.0, community recompilation).
+  Its public profiling reports are a starting point for separating
+  guest GPU command processing, Vulkan barriers and shader translation
+  from pass cost. Checked 2026-11-28 during the shadow and reduced-buffer
+  investigation. Its published observations do not give the stock
+  terrain receiver offsets, AO taps or reduced haze inputs.
+  [Project performance notes](https://github.com/Kokonotcu/BOTW-Native-SteamDeck#how-the-speedups-work)
 - **zeldaret/botw** (Switch 1.5.0, in-progress matching decompilation). Useful
   for recovering names, tracing CPU state and finding matching concepts to
   test. Re-establish control flow and constants in Wii U v208 before using

@@ -528,7 +528,8 @@ mod tests {
     fn default_look_is_the_identity_layout() {
         let texels = Look::default().texels();
         assert_eq!(texels[0], Vec4::new(1.0, 1.0, 1.0, 0.0));
-        assert!(texels[1..].iter().all(|t| *t == Vec4::ZERO));
+        assert!(texels[1..28].iter().all(|t| *t == Vec4::ZERO));
+        assert_eq!(texels[28], Vec4::Y);
         let bytes = texel_bytes(&texels, &LookNoise::default());
         assert_eq!(
             bytes.len(),

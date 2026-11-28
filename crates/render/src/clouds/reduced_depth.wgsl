@@ -40,7 +40,7 @@ fn full(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
 @fragment
 fn half(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let frame = vec2<f32>(textureDimensions(scene_depth));
-    let texel = min(vec2<i32>(in.uv * frame), vec2<i32>(frame) - 1);
+    // PS 109 selects the upper-left full-resolution sample of each block.
+    let texel = 2 * vec2<i32>(in.position.xy);
     return vec4(normalized_linear_depth(textureLoad(scene_depth, texel, 0)));
 }

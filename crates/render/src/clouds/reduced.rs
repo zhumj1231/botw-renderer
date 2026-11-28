@@ -44,6 +44,10 @@ use bevy::render::view::{Msaa, ViewDepthTexture, ViewUniform, ViewUniformOffset,
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::{ShaderDefVal, ShaderRef};
 
+use crate::postfx::{PostFx, haze_live};
+use crate::volume_mask::VolumeMaskTextures;
+use bevy::render::texture::TextureCache;
+
 use super::{CloudDome, CloudMaterial, DOME_RADIUS};
 
 const DEPTH_SHADER: Handle<Shader> = uuid_handle!("c5e2a8f4-6d31-4b7e-9a05-3f18d6b2e947");
@@ -580,7 +584,16 @@ fn draw(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_reduced_clouds(
-    view: ViewQuery<(&ViewDepthTexture, &ViewUniformOffset, &Msaa), With<ReducedClouds>>,
+    view: ViewQuery<
+        (
+            &ViewDepthTexture,
+            &ViewUniformOffset,
+            &Msaa,
+            Option<&VolumeMaskTextures>,
+            Option<&PostFx>,
+        ),
+        With<ReducedClouds>,
+    >,
     frame: Option<Res<ReducedFrame>>,
     buffers: Option<Res<ReducedBuffers>>,
     images: Res<RenderAssets<GpuImage>>,
@@ -588,9 +601,13 @@ fn draw_reduced_clouds(
     pipeline_cache: Res<PipelineCache>,
     view_uniforms: Res<ViewUniforms>,
     globals: Res<GlobalsBuffer>,
+    live_haze: Option<Res<haze_live::LiveHaze>>,
+    haze_inputs: haze_live::Inputs,
+    queue: Res<RenderQueue>,
+    mut texture_cache: ResMut<TextureCache>,
     mut ctx: RenderContext,
 ) {
-    let (depth, view_offset, msaa) = view.into_inner();
+    let (depth, view_offset, msaa, volume, postfx) = view.into_inner();
     let (Some(frame), Some(buffers)) = (frame, buffers) else {
         return;
     };
@@ -655,6 +672,23 @@ fn draw_reduced_clouds(
         clouds_pipeline,
         &[(&view_group, &[view_offset.offset]), (&buffers.clouds, &[])],
     );
+    // Native cloud and projected haze draws accumulate in one reduced colour
+    // target. Preserve the cloud's transmission for the final composition.
+    if let (Some(haze), Some(volume), Some(postfx)) = (live_haze, volume, postfx) {
+        haze.draw(
+            encoder,
+            &device,
+            &queue,
+            &pipeline_cache,
+            &mut texture_cache,
+            &images,
+            &haze_inputs,
+            view_offset,
+            volume.unmerged_near_mask(),
+            &color.texture_view,
+            postfx.haze_palette,
+        );
+    }
     encoder.pop_debug_group();
 }
 

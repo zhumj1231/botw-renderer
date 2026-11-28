@@ -132,13 +132,18 @@ The same-input display curve is verified at the sampled points.
 The weather replays are additional validation scenes.
 
 The new [fixed-camera day and night renderer comparison](docs/research/wiiu-deferred-shading.md#independent-renderer-comparison-of-the-fixed-camera-pair)
-isolates the remaining near-night shadow bias and the missing
-contact AO coverage. The daylight sky A/B isolates excess alpha
-and weak particle attenuation of the near-volume mask.
-`BOTW_HAZE_LIVE=0.378` now matches the native 0.125 haze vertex
-alpha at the tested time. Trace the mask particle coverage and
-the pre-existing half-resolution effect draws before fitting sky
-color. Native frames 4188 and 12902 are two time-of-day checkpoints.
+contains the near-night shadow control (light direction and split distances),
+the AO replay using each image's own depth, and the shared reduced target
+from cloud and live haze through HDR composition. The representative
+same-input AO equation agrees within one code; contact parity still
+depends on the field depth writers. Start from
+`BOTW_COMPARE_EXPAND_INPUTS=1` and use `BOTW_RENDERER_AO_CORNER=0,0` for
+builds with the corrected upper-left sample. `BOTW_HAZE_LIVE=0.378`
+matches native haze vertex alpha at the tested time. The near shadow cascade is orthographic; the remaining two native
+cascades have a light-space perspective warp. Trace the runtime projection
+writer before replacing the Bevy shadow maps. Measure the mask
+output and dominant receiver and caster mismatches before tuning
+weather or visual parameters. Native captures are 4188 and 12902.
 
 1. **Close the outdoor clear-day baseline.** Use frame 3830 for the
    [terrain shadow and SSAO readbacks](docs/research/wiiu-deferred-shading.md#clear-day-terrain-expand-at-eid-9949).

@@ -271,10 +271,167 @@ The native Fog01 vertex shader copies emitter alpha directly.
 The live program now omits the generic particle distance and
 area fade for its shader family. The 0.378 run confirms
 exactly 0.125 for every valid live vertex. Its post-particle mask
-still averages 1.36133 at the sky footprint, and the native half
-effect target already has contributions from earlier draws where
-the renderer's dedicated target starts at clear. These remain
-separate targets for the next comparison.
+still averages 1.36133 at the sky footprint.
+
+#### Shared reduced cloud and haze target
+
+Pixel History at native half pixel (320, 22) identifies E13045 as
+the clear to (0, 0, 0, 1). E13054 is a 1,656-index cloud draw
+with four BC4 512x512 bindings. It leaves RGBA (0.04800, 0.05432,
+0.03323, 0.77197). E13377 writes the projected haze into the same
+RGBA16F allocation (640x368, active 640x360). E13381 copies it for
+full-resolution E13390, which blends src + dst * src.a. The mask
+uses a separate 160x90 active viewport. Each tap around the sky
+checkpoint has six passing native mask fragments (E11123, E11125,
+E11135, E11171, E11181, E11183). The earlier live comparison has
+three passing fragments per tap. Both the fragment count and
+attenuation differ locally.
+
+The independent renderer now accumulates live projected haze into
+the reduced cloud target and reuses the depth-guided cloud composite.
+It retains a private copy of the near mask because the earlier field
+fog path consumes the unmodified mask. The existing fixture replay
+entry still composites recorded inputs through its own pass.
+[validate_shared_reduced_buffer.py](../../tools/research/validate_shared_reduced_buffer.py)
+verifies the shared attachment, single full-resolution consumer and
+blend state on a local capture named
+`renderer-paired-4188-shared-reduced_capture.rdc` in `BOTW_FOG_OUT`.
+The capture contains no replay geometry. E26256 writes red 0.1931 to
+half pixel (320, 22). The indexed haze E26289 takes it to 0.3113.
+E26673 composites sky at (640, 45) to linear RGB (0.44287, 0.53369,
+0.30566), with mean absolute error 0.05073 per channel at this point.
+The previous separate-pass 0.378 run had 0.077 at that point.
+Live cloud positions and particle state vary with runtime, so this
+check covers the pass structure and a representative image sample.
+
+The original mask batch capacity also includes expired slots. In
+frame 4188, 37 draws from E11123 through E11195 have the same shader
+and mask texture. Attribute Sem6.w is 200 frames. Only 19 of those
+draws have emitter frame minus Sem7.w at most 200. The observed birth
+spacing while active is usually 9, 11 or 12 frames. A host renderer
+frame can advance the simulation by more than one game frame, yet
+the underlying fractional-rate emitter attempts emission once per
+Calc. The live test mask uses a 30 Hz fixed step to preserve that
+cadence. The local shared-buffer regression increases active mask
+particles from 9 to 20 for this setup; 19 of 37 checked original
+draws are within their lifetime. Four sky taps now average 0.79773
+after blending, compared with 1.36133 in the earlier separate-pass
+live run and 0.67346 native. The recorded displayed HDR at the day
+checkpoint is (0.42383, 0.51318, 0.29907), with mean absolute RGB
+error 0.04077. At night the same point is (0.00915, 0.08087, 0.08655),
+with mean absolute error 0.02513. These points come from independent
+live sequences; the exact native random state and VFog remain open.
+
+Reusing the buffers removes one 640x360 and one 1280x720 RGBA16F
+allocation from the live route (8.79 MiB of logical image storage)
+and one full-resolution pass at 1280x720. This is a resource and
+pass count, with no hardware bandwidth or timing measurement.
+
+#### SSAO depth-source isolation
+
+Set `BOTW_COMPARE_EXPAND_INPUTS=1` when running the comparison script
+to recompute both AO outputs from the textures each draw actually
+reads. The two 4x4 R8G8 rotation inputs match byte for byte. On the
+56,463 matched day pixels and 56,844 matched night pixels, both GPU
+outputs independently agree with the same four-tap formula to within
+one 8-bit code at every pixel (native mean error below 0.001 codes).
+Using the renderer depth with the same formula instead produces the
+originally observed AO loss. Changing the sample corner alone improves
+the mean slightly and still leaves most contact AO missing.
+
+Native E6049 reads 1280x720 D32 and writes the half normalized linear
+depth exported to the Expand input at E10303. Comparing each available
+full-resolution child against the reduced depth finds that the upper-left
+child matches every one of 185,304 non-far pixels within 1 mm; 97,869
+pixels match only that child. The live path now takes this same explicit
+tap for AO, cloud occupancy and the reduced composition guide. In the
+old capture a substantial fraction of the native-only occluder taps
+are class 4 in both images (1,203 day and 952 night), which includes
+opaque field meshes and some vegetation. For example, at day receiver
+(239, 222), the native neighbor at (246, 221) is 19.443 m and the prior
+renderer sampled 20.729 m. Native and renderer center depths differ by
+only 0.084 m, so center matching alone does not control the AO input.
+The corrected live capture yields 333 and 334 active pixels, up
+from 299 and 300. Capture setup is `BOTW_RENDERER_CAPTURE_PATTERN=
+renderer-paired-%d-shared-fixed_capture.rdc` (one environment value)
+and `BOTW_RENDERER_AO_CORNER=0,0`. The two recomputed live AO fields
+again agree to within one code.
+
+#### Night shadow inputs
+
+Flip the native view-space travel vector env[4].xyz and rotate it
+by the camera basis to compare with the renderer's world-space
+towards-light vector. The directions differ by only 0.061 degrees
+by day and 0.025 degrees by night. Both captures have 120 m outer
+range and 720x720 cascade maps. The measured context[58] split
+distances are 7.91209 / 24.72528 / 120 m by day and 7.91199 /
+24.72519 / 120 m by night.
+
+The renderer was recaptured at 22:20 with `--shadow-cascades
+7.91199,24.72519,120` while retaining its Bevy map allocation and
+projection. Under 20 m, the same 53,732 depth-matched pixels go
+from 20.52 to 20.15 mean absolute codes of Expand red error. Signed
+bias goes from +17.23 to +16.34 codes. This separates sampled split
+distances and light direction from the remaining discrepancies in
+receiver offset, map projection, sampler or shadow caster geometry.
+
+The native field-class PS 128 receiver offset uses the depth-derived
+normal G from the center/right/down taps and the encoded normal N in
+view space. With L the light's travel direction, set M to
+normalize(1.5 N - G), d to dot(M, L), and translate the receiver by
+
+```text
+flag0 * sat(-dot(N,L)) * 0.0791 * (1 + 0.25 * z * tan(fovy/2))
+      * (1 - d*d) * (M - d*L)
+```
+
+The half-resolution deferred terrain route now applies this offset
+in place of Bevy's normal bias for those field draws, using the
+measured half-depth sample phase. Frame 12902 at the matched native
+splits, in `renderer-paired-12902-stock-receiver_capture.rdc`, then
+gives 19.40 codes MAE under 20 m (previously 20.15) and 8.01 codes
+in the 20-120 m band (previously 13.71). The 166-pixel over-120 m
+subset worsens from 14.26 to 18.11 codes. Its receiver geometry and
+baked map sampling need a separate comparison. Use
+`BOTW_DAY_NIGHT_FRAMES=12902`, `BOTW_RENDERER_AO_CORNER=0,0` and
+`BOTW_RENDERER_AO_REACH=120` for this capture.
+
+#### Cascade projections in the two original frames
+
+For each cascade the shader divides the first three row dots by
+the fourth dot from context[42 + 4*i .. 45 + 4*i]. The first cascade's
+fourth row is (0, 0, 0, 1) in both frames. Its orthographic rectangle
+has view-axis-independent light-plane extents of about 15.96 x 10.69 m
+in the day frame and 13.76 x 10.26 m at night. The other two have
+a spatially varying homogeneous divider. Their fourth row's xyz
+matches the normalized camera forward projected perpendicular to the
+main light vector to 1.2e-7 in Euclidean distance. The UV numerators
+and the divider are invariant to displacement along the light direction
+within the measured precision.
+
+| Original frame | Near w | Middle w offset | Far w offset |
+| --- | ---: | ---: | ---: |
+| 4188 | 1 | 36.95795 | 134.65979 |
+| 12902 | 1 | 18.00452 | 68.25098 |
+| 3830 (E9949) | 1 | 37.24854 | 142.87109 |
+| 85916 (E9273) | 1 | 16.07983 | 69.94727 |
+| 97432 (E7536) | 1 | 11.56299 | 52.23657 |
+| 123839 (E7609) | 1 | 27.69421 | 102.70624 |
+| 142624 (E10635) | 1 | 67.69824 | 236.81494 |
+
+This demonstrates a light-space perspective warp in the latter two
+receiver projections. Its axis agrees with the setup described by
+[Wimmer et al.](https://www.cg.tuwien.ac.at/research/publications/2004/Wimmer-2004-LSPM/).
+A provisional reconstruction using the eight uncut camera-frustum
+corners and the paper's optimal near-plane expression divided by the
+sine of the light angle overshoots the measured divider offset by
+1.22 to 11.30 m over the four fixed-camera warps. This bounds the
+remaining work to the crop and warp parameterization; the public
+formula with that uncut frustum does not reproduce these captures.
+The exact placement needs the CPU matrix builder. The current Bevy
+directional-light path uses three square orthographic projections,
+and its validation rounds 720 up to 1024. Matching only camera
+splits will leave those structural differences.
 
 ## Outdoor material paths
 

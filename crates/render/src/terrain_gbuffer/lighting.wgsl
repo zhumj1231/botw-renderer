@@ -11,8 +11,8 @@
 #import botw::clouds::{CloudParams, cloud_shadow}
 #import botw::look::{read_look_at, sky_cover, field_wetness_at, haze_terms}
 #import botw::deferred_light::{
-    FieldSurface, Frame, MainLight, field_footprint, field_ssao, game_frame, scene_depth,
-    main_light_source, field_surface_shadow, field_shadow_depth, field_shadow_range, four_shadow_comparisons,
+    FieldSurface, Frame, MainLight, field_footprint, field_ssao, ssao_sample_z, game_frame, scene_depth,
+    main_light_source, receives_main_shadow, field_surface_shadow, field_shadow_depth, field_shadow_range, four_shadow_comparisons,
     wet_field, sky_visibility, field_ambient_at, field_compose,
 }
 #import botw::normal_map::{expand_receiver_normal, expand_receiver_bits}
@@ -217,11 +217,42 @@ fn blend_baked_shadow(dynamic: f32, world: vec3<f32>, z: f32, range: f32) -> f32
     return mix(dynamic, baked * baked * baked * baked, fade_far);
 }
 
-fn field_expand_visibility(pixel: FieldPixel, light: MainLight) -> vec4<f32> {
-    var visibility = field_visibility(pixel, light);
-    visibility.x = blend_baked_shadow(visibility.x, pixel.pbr.world_position.xyz,
-        -pixel.frame.p.z, field_shadow_range(light.index));
-    return visibility;
+// PS 128 reconstructs the geometry normal from the center, right and
+// down samples of the half NLD. Its camera rays still use the half UVs.
+fn field_expand_position(uv: vec2<f32>, half_size: vec2<f32>) -> vec3<f32> {
+    let ray = vec2(2.0 * uv.x - 1.0, 1.0 - 2.0 * uv.y);
+    let d = -ssao_sample_z(uv, half_size);
+    return vec3(d * ray / vec2(view.clip_from_view[0][0], view.clip_from_view[1][1]), -d);
+}
+
+fn field_expand_visibility(pixel: FieldPixel, light: MainLight, half_size: vec2<f32>) -> vec4<f32> {
+    let uv = pixel.frame.uv;
+    let P = field_expand_position(uv, half_size);
+    let z = -P.z;
+    let range = field_shadow_range(light.index);
+    var receiver = pixel.pbr;
+    var point = P;
+    if pixel.surface.flag != 0.0 && z < range && receives_main_shadow(light, receiver) {
+        let step = 1.0 / half_size;
+        let right = field_expand_position(uv + vec2(step.x, 0.0), half_size);
+        let down = field_expand_position(uv + vec2(0.0, step.y), half_size);
+        let geometric = cross(right - P, down - P);
+        let G = geometric * inverseSqrt(max(dot(geometric, geometric), 1e-20));
+        let N = direction_world_to_view(pixel.surface.N);
+        let M = normalize(1.5 * N - G);
+        let D = direction_world_to_view(-light.to_light) * textureLoad(look_texture, vec2(0, 0), 0).y;
+        let d = dot(M, D);
+        let facing = saturate(-dot(N, D));
+        let scale = 0.0791 * (1.0 + 0.25 * z / view.clip_from_view[1][1]);
+        point += scale * facing * (1.0 - d * d) * (M - d * D);
+    }
+    receiver.world_position = view.world_from_view * vec4(point, 1.0);
+    // The point already includes the receiver displacement from PS 128.
+    receiver.world_normal = vec3(0.0);
+    let sun = field_surface_shadow(light, receiver, P.z);
+    let world = (view.world_from_view * vec4(P, 1.0)).xyz;
+    let visibility = blend_baked_shadow(sun, world, z, range);
+    return vec4(visibility, 0.0, field_ssao(pixel.frame, ssao_noise, light.index), 1.0);
 }
 
 @fragment
@@ -234,10 +265,10 @@ fn expand(in: FieldVertexOutput) -> @location(0) vec4<f32> {
     }
     let light = main_light_source();
     if in.code == 4u {
-        return field_expand_visibility(field_pixel(uv), light);
+        return field_expand_visibility(field_pixel(uv), light, half_size);
     }
     if in.code == 5u {
-        return field_expand_visibility(object_pixel(uv), light);
+        return field_expand_visibility(object_pixel(uv), light, half_size);
     }
 
     let sun = expand_shadow(light, uv, 1.0 / half_size, in.code == 6u);

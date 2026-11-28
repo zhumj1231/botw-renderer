@@ -94,6 +94,7 @@ pub struct SetRun {
     sim: EmitterSetSim,
     draws: Vec<Entity>,
     faded: bool,
+    mask_frame_remainder: f32,
 }
 
 /// One emitter's draw entity.
@@ -205,6 +206,7 @@ pub fn run_sets(
                 sim,
                 draws: Vec::new(),
                 faded: false,
+                mask_frame_remainder: 0.0,
             });
             continue;
         };
@@ -219,7 +221,18 @@ pub fn run_sets(
             run.sim.fade();
             run.faded = true;
         }
-        run.sim.step(frames, eye);
+        if live_haze.0.is_some() && set.set.as_ref() == "VolumeMaskAdd01test" {
+            // Emission attempts happen once per Calc. At low host FPS, a
+            // single large step advances life but skips emission attempts.
+            run.mask_frame_remainder += frames;
+            let ticks = run.mask_frame_remainder.floor();
+            run.mask_frame_remainder -= ticks;
+            for _ in 0..ticks as u32 {
+                run.sim.step(1.0, eye);
+            }
+        } else {
+            run.sim.step(frames, eye);
+        }
         if !run.sim.alive() {
             commands.entity(entity).despawn();
             continue;

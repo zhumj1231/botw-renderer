@@ -359,11 +359,19 @@ fn ssao_rotation(noise: texture_2d<f32>, noise_coord: vec2<f32>) -> vec2<f32> {
 }
 
 fn ssao_sample_z(uv: vec2<f32>, half_size: vec2<f32>) -> f32 {
-    // SI-GBUF-05: reconstruct the point-sampled half-depth grid from Bevy's depth prepass.
-    let texel = clamp(floor(uv * half_size), vec2(0.0), half_size - 1.0);
-    return scene_position((texel + 0.5) / half_size).z;
+#ifdef DEPTH_PREPASS
+    // SI-GBUF-05: reconstruct the half-depth grid from Bevy's depth prepass.
+    // Native PS 109 keeps the upper-left tap of each 2x2 depth block.
+    let half_texel = vec2<i32>(clamp(floor(uv * half_size), vec2(0.0), half_size - 1.0));
+    let depth = textureLoad(view_bindings::depth_prepass_texture, 2 * half_texel, 0);
+    let ndc = vec3(0.0, 0.0, max(depth, 1e-6));
+    return position_ndc_to_view(ndc).z;
+#else
+    return scene_position(uv).z;
+#endif
 }
 
+#ifdef DEPTH_PREPASS
 // One direction's pair of samples, at `uv ± offset`: how much each is in
 // front of the point, `k` its scale per metre.
 fn ssao_pair(uv: vec2<f32>, biased_z: f32, offset: vec2<f32>, k: f32, half_size: vec2<f32>) -> f32 {
@@ -378,17 +386,20 @@ fn ssao_pair(uv: vec2<f32>, biased_z: f32, offset: vec2<f32>, k: f32, half_size:
     return mix(um, tp, fp) + mix(up, tm, fm);
 }
 
+#endif
+
 // The game's screen-space ambient occlusion at the pixel (1: open): four
 // depth samples in two directions turned by the noise, a fixed share of
 // the screen away.
 fn field_ssao(frame: Frame, noise: texture_2d<f32>, light_index: u32) -> f32 {
 #ifdef DEPTH_PREPASS
     // PS 128 keeps AO active through the last cascade's shadow fade.
-    if -frame.p.z >= field_shadow_range(light_index) {
-        return 1.0;
-    }
     let depth_size = textureDimensions(view_bindings::depth_prepass_texture);
     let half_size = vec2<f32>(max(depth_size / 2u, vec2(1u)));
+    let center_z = -ssao_sample_z(frame.uv, half_size);
+    if center_z >= field_shadow_range(light_index) {
+        return 1.0;
+    }
     let noise_coord = clamp(frame.uv * half_size, vec2(0.0), half_size - 1.0);
     let r = ssao_rotation(noise, noise_coord);
     let turn = mat2x2<f32>(r.x, r.y, -r.y, r.x);
@@ -397,7 +408,7 @@ fn field_ssao(frame: Frame, noise: texture_2d<f32>, light_index: u32) -> f32 {
     let b = turn * vec2<f32>(0.0199001, 0.0019967) * aspect;
     // The original applies 0.995 to normalized depth, measured from the near plane.
     let near_correction = 0.005 * view.clip_from_view[3][2];
-    let biased_z = 0.995 * -frame.p.z + near_correction;
+    let biased_z = 0.995 * center_z + near_correction;
     let open = 0.17764 * ssao_pair(frame.uv, biased_z, a, 14.70871, half_size)
         + 0.254544 * ssao_pair(frame.uv, biased_z, b, 10.9109, half_size);
     return 1.0 - saturate((open - 0.4321855) * 6.0);
