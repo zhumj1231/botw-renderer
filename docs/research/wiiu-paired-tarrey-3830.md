@@ -497,6 +497,34 @@ matches all 14,400 active R16F texels exactly. Its haze draw at E27295
 matches all 230,400 active RGBA16F texels exactly. The capture's padded
 rows are excluded from both comparisons.
 
+The live vertex path can take the two meshes' `Sem7` from their
+baked RGBA vertex colors. Every vertex in both E10819 and E13765
+matches the corresponding baked color after conversion to f32.
+E13765's projected coordinates are exactly
+`((clip.x + clip.w) / 2, (clip.w − clip.y) / 2)` in the captured
+post-VS stream, with the original clip `w` as the divisor. These can
+be regenerated from the live clip position.
+
+The camera ELink `VolumeSwitch_Add` and `VolumeSwitch_Fog` roots
+select `VolumeMaskAdd01test` and `VolumeMaskFog01` at matrix mode 4
+and scale alpha by the global VFog concentration (see
+[weather and camera effects](weather.md#3-elink-user-camera-what-plays-data-elink2dbsbelnk-v208)).
+Four additional local captures confirm that the haze draw uses
+changing fragment palette constants. The same 480-index draw
+with a 160-wide R16F PS9 input has these rounded values:
+
+| Frame | Draw | Palette RGBA input |
+| --- | --- | --- |
+| 85916 | E13565 | (0.42051, 0.61400, 0.57653, 0.87019) |
+| 97432 | E11420 | (0.85098, 1.00000, 0.78300, 1.25000) |
+| 100801 | E10678 | (0.85098, 1.00000, 0.78300, 1.25000) |
+| 123839 | E10296 | (0.09120, 0.36634, 0.72374, 0.90000) |
+
+The live route must carry this palette independently of the
+particle set alpha. The mask stage also needs the custom vertex
+program's animated UV output and intensity before it can use the
+captured-input-tested fragment path.
+
 ### Camera-relative mask emitter
 
 The previous [EP04 reconstruction](eft-custom-blocks.md#2-plugin-block-ep04-area-loop-f)
