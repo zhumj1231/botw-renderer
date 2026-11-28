@@ -87,6 +87,19 @@ local.
 
 ### Other implementations to compare
 
+For the Resident haze follow-up, the supplied articles give two comparison
+points. GuardHei's [TotK frame study](https://zhuanlan.zhihu.com/p/674148942)
+shows particle masks and several reduced-resolution atmosphere effects in a
+Switch frame. Its ground fog raymarch is a separate comparison from the
+Wii U BotW mesh overlay. [BrainChild's analysis](https://www.resetera.com/threads/zelda-breath-of-the-wild-the-technical-analysis.8197/)
+and its [Chinese translation](https://www.bilibili.com/opus/283686760320058651)
+describe distant-fog color and appearance from gameplay. The Nintendo
+[CEDEC layer talk](https://cedec.cesa.or.jp/2017/session/VA/s58eed7182c81b.html)
+establishes the design goal of layering space and time. These sources
+give no emitter or uniform identification for E13765. The relevant
+implementation evidence is in the
+[Wii U frame checkpoint](wiiu-paired-tarrey-3830.md#camera-relative-mask-emitter).
+
 - **BotW Switch graphics notes** from the `nxnative_patch` project document
   an NVN translation path and shader-container observations. Use the pinned
   notes to choose equivalent Switch resources or draws to inspect. Treat the

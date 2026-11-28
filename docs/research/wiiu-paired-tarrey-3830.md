@@ -457,5 +457,23 @@ changes by `(−0.0707, −0.0740, −0.0271)` on the far-slope box and by
 `(−0.0941, −0.0965, −0.0304)` on sky. The localized haze draw adds
 color while the preceding mask draws restrain its strength.
 
+### Camera-relative mask emitter
+
+The previous [EP04 reconstruction](eft-custom-blocks.md#2-plugin-block-ep04-area-loop-f)
+describes the shared area-loop transform. The baked
+`VolumeMaskAdd01test/Haze_Far` uses a camera-relative box with
+half extents (5, 4, 5), camera-space center offset (0, 1.5, −6), and
+fade fractions (0.3, 0.3, 0.3). Its repeated-draw count parameter is
+zero. The captured E10819 vertex constant block contains the exact
+half extents and fade fractions at float indices 52 and 92. This
+provides an independent check on the emitter identification and
+supports reusing the area transform in
+`crates/render/src/effects/run.rs::extra_for`.
+
+The later `Haze_Far_simple_new` definition has no EP04 block.
+Validate its placement and palette upload separately. The mask
+area loop does not account for when the game creates the emitter
+or how it derives the E13765 fragment intensity.
+
 A separate forward-mode Vulkan screenshot at 640×360 verified that
 materials still render when shared pre-shading is unavailable.
