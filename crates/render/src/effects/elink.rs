@@ -40,7 +40,7 @@ use crate::objects::PlacedObject;
 pub struct CameraEffectSettings {
     /// SI-WTH-15: opt-in until the FieldEnvEffect caller is recovered.
     pub field_haze: bool,
-    /// SI-WTH-21: camera volume particles use incomplete custom shaders.
+    /// SI-WTH-21: these camera volume toggles also expose the generic preview.
     pub volume_dust: bool,
     pub volume_fog: bool,
     pub volume_add: bool,
@@ -53,6 +53,11 @@ pub struct ElinkPlugin {
 
 impl Plugin for ElinkPlugin {
     fn build(&self, app: &mut App) {
+        let live_haze = app
+            .world()
+            .resource::<super::LiveHazeStrength>()
+            .0
+            .is_some();
         let path = self.assets.join(paths::ELINK);
         let task = path.exists().then(|| {
             AsyncComputeTaskPool::get().spawn(async move {
@@ -66,7 +71,11 @@ impl Plugin for ElinkPlugin {
         }
         app.insert_resource(Elink { task, ..default() })
             .init_resource::<GlobalProperties>()
-            .init_resource::<CameraEffectSettings>()
+            .insert_resource(CameraEffectSettings {
+                volume_fog: live_haze,
+                volume_add: live_haze,
+                ..default()
+            })
             .add_message::<PlayElinkKey>()
             .add_systems(
                 PostUpdate,
@@ -249,6 +258,7 @@ fn update_global_properties(
     time: Option<Res<crate::daynight::TimeOfDay>>,
     precipitation: Option<Res<crate::precipitation::Precipitation>>,
     wind: Option<Res<crate::grass::GrassWind>>,
+    haze: Res<super::LiveHazeStrength>,
 ) {
     let g = &mut *globals;
     if let Some(weather) = &weather {
@@ -288,6 +298,9 @@ fn update_global_properties(
     // nearby material.
     g.set("シーンタイプ", PropertyValue::Enum(OPEN_WORLD));
     g.set("カメラ位置が屋内", PropertyValue::Enum(0));
+    if let Some(strength) = haze.0 {
+        g.set("濃度:VFog", PropertyValue::Float(strength));
+    }
     for name in [
         "濃度:砂嵐",
         "濃度:胞子",
@@ -834,9 +847,8 @@ impl Instance {
         let mut roots: Vec<RootKind> = (0..user.property_triggers.len())
             .map(RootKind::Property)
             .collect();
-        // SI-WTH-21: these volume emitters currently pass through the generic
-        // particle renderer, producing visible camera-relative clouds even
-        // at zero VFog. Keep them opt-in until their programs are ported.
+        // SI-WTH-21: keep the generic preview and the live haze experiment
+        // opt-in while the VFog activation writer is open.
         roots.extend(
             user.always_triggers
                 .iter()

@@ -27,6 +27,7 @@ use bevy::prelude::*;
 pub use elink::CameraEffectSettings;
 pub use library::{EffectData, EffectLibrary};
 pub use run::EffectRuntime;
+pub(crate) use run::{HazeDraws, HazeStage};
 
 use crate::camera::MainView;
 use crate::objects::PlacedObject;
@@ -42,6 +43,16 @@ impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
         draw::register(app);
         upload::register(app);
+        app.init_resource::<HazeDraws>()
+            .add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
+                HazeDraws,
+            >::default())
+            .insert_resource(LiveHazeStrength(
+                std::env::var("BOTW_HAZE_LIVE")
+                    .ok()
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .filter(|v| v.is_finite() && *v > 0.0 && *v <= 1.0),
+            ));
         app.add_plugins(elink::ElinkPlugin {
             assets: self.assets.clone(),
         });
@@ -76,6 +87,13 @@ pub struct EffectRenderSettings {
     /// Preview deferred particles through the standard color combiner.
     pub deferred_preview: bool,
 }
+
+/// SI-WTH-22: the preview supplies VFog while the native activation writer is open.
+#[derive(Resource)]
+pub(crate) struct LiveHazeStrength(pub Option<f32>);
+
+pub(crate) use draw::DrawParams;
+pub(crate) use draw::SHADER as PARTICLE_SHADER;
 
 impl EffectRenderSettings {
     pub fn draws(&self, custom_shader: u32) -> bool {

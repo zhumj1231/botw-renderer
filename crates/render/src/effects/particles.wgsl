@@ -8,10 +8,19 @@
 // One draw per emitter: vertex `v` is corner `v % 4` (or vertex `v % n` of
 // the particle's primitive) of particle `v / 4` (`/ n`).
 
+#ifdef BOTW_LIVE_HAZE
+#import bevy_render::view::View
+@group(0) @binding(0) var<uniform> view: View;
+@group(1) @binding(12) var haze_input: texture_2d<f32>;
+@group(1) @binding(13) var haze_sampler: sampler;
+@group(1) @binding(14) var<uniform> haze_palette: vec4<f32>;
+#else
 #import bevy_pbr::mesh_view_bindings::view
 #import bevy_pbr::prepass_utils
-#import botw::look::{read_look, read_look_at, apply_haze, sky_cover}
+#import botw::look::{read_look_at, apply_haze}
 #import botw::deferred_light::{field_ambient, cube_at, cube, cube_mean, analyzed_light_share}
+#endif
+#import botw::look::{read_look, sky_cover}
 
 struct Particle {
     local_pos: vec4<f32>,
@@ -319,6 +328,9 @@ struct Varyings {
     // The shape's normal, turned with the particle (custom shader 3's cube
     // light).
     @location(7) normal: vec3<f32>,
+#ifdef BOTW_LIVE_HAZE
+    @location(8) projected: vec3<f32>,
+#endif
 }
 
 fn dead() -> Varyings {
@@ -564,6 +576,10 @@ fn vertex(in: Vertex) -> Varyings {
 
     var out: Varyings;
     out.clip = view.clip_from_world * vec4<f32>(world, 1.0);
+#ifdef BOTW_LIVE_HAZE
+    out.projected = vec3<f32>((out.clip.w + out.clip.x) * 0.5,
+                             (out.clip.w - out.clip.y) * 0.5, out.clip.w);
+#endif
     out.world = world;
     let z = -(view.view_from_world * vec4<f32>(world, 1.0)).z;
 
@@ -593,7 +609,28 @@ fn vertex(in: Vertex) -> Varyings {
     return out;
 }
 
+#ifdef BOTW_LIVE_HAZE
+@fragment
+fn live_haze_mask(in: Varyings) -> @location(0) vec4<f32> {
+    let mask = textureSample(tex0, smp0, in.uv01.xy).r;
+    let alpha = in.factors.x * saturate(in.color0.a * (in.vertex_color.a * mask));
+    if !(alpha > bitcast<f32>(draw.combiner[4].w)) { discard; }
+    let rgb = (in.color1.rgb + (in.color0.rgb - in.color1.rgb) * (mask * mask)) * in.vertex_color.rgb;
+    return vec4<f32>(rgb, alpha);
+}
+
+@fragment
+fn live_haze_effect(in: Varyings) -> @location(0) vec4<f32> {
+    let mask = textureSample(haze_input, haze_sampler, in.projected.xy / in.projected.z).r;
+    let alpha = (in.factors.x * saturate(in.color0.a * in.vertex_color.a)) * saturate(0.5 * mask);
+    if !(alpha > bitcast<f32>(draw.combiner[4].w)) { discard; }
+    let rgb = (in.color0.rgb * in.vertex_color.a) * (haze_palette.rgb * haze_palette.a);
+    return vec4<f32>(rgb, alpha);
+}
+#endif
+
 // --- Pixel shader (§8) ---
+#ifndef BOTW_LIVE_HAZE
 
 fn sample_slot(s: u32, uv: vec2<f32>) -> vec4<f32> {
     if ((draw.textures.x >> s) & 1u) == 0u {
@@ -851,3 +888,4 @@ fn fragment(in: Varyings) -> @location(0) vec4<f32> {
     }
     return vec4<f32>(color, alpha);
 }
+#endif

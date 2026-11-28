@@ -10,7 +10,7 @@ use bevy::render::renderer::{RenderDevice, RenderQueue};
 
 use super::haze_raster::HazeRasterReplay;
 
-const SHADER: Handle<Shader> = uuid_handle!("c7bbb279-02d8-431d-95fc-ee17763f8fef");
+pub(super) const SHADER: Handle<Shader> = uuid_handle!("c7bbb279-02d8-431d-95fc-ee17763f8fef");
 const FRAME: Extent3d = Extent3d {
     width: 1280,
     height: 720,

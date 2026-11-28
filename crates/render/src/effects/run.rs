@@ -104,7 +104,18 @@ pub struct EmitterDraw {
     /// The mesh holds this many particles of this emitter's shape.
     capacity: usize,
     emitter: usize,
+    mesh: Handle<Mesh>,
+    material: Handle<ParticleMaterial>,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HazeStage {
+    Mask,
+    Effect,
+}
+
+#[derive(Resource, Clone, Default, bevy::render::extract_resource::ExtractResource)]
+pub(crate) struct HazeDraws(pub Vec<(HazeStage, Handle<Mesh>, ParticleMaterial)>);
 
 fn set_params(set: &EffectSet) -> SetParams {
     SetParams {
@@ -134,15 +145,21 @@ pub fn run_sets(
     mut sets: Query<(Entity, &EffectSet, &GlobalTransform, Option<&mut SetRun>)>,
     draws: Query<&EmitterDraw>,
     mut uploads: ResMut<super::upload::EffectUploads>,
+    haze: (ResMut<HazeDraws>, Res<super::LiveHazeStrength>),
     camera: Query<&GlobalTransform, With<MainView>>,
     look: Res<LookTexture>,
     means: Res<CubeMean>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ParticleMaterial>>,
-    mut buffers: ResMut<Assets<ShaderBuffer>>,
-    mut images: ResMut<Assets<Image>>,
+    assets: (
+        ResMut<Assets<Mesh>>,
+        ResMut<Assets<ParticleMaterial>>,
+        ResMut<Assets<ShaderBuffer>>,
+        ResMut<Assets<Image>>,
+    ),
     grass_wind: Option<Res<crate::grass::GrassWind>>,
 ) {
+    let (mut haze_draws, live_haze) = haze;
+    let (mut meshes, mut materials, mut buffers, mut images) = assets;
+    haze_draws.0.clear();
     if let Some(task) = &mut runtime.task
         && let Some(tables) = block_on(poll_once(task))
     {
@@ -265,9 +282,15 @@ pub fn run_sets(
             let reuse = draws
                 .get(child)
                 .is_ok_and(|d| d.emitter == key && d.capacity >= count);
-            let (particles, dynamic) = if reuse {
+            let (particles, dynamic, mesh, material, capacity) = if reuse {
                 let draw = draws.get(child).unwrap();
-                (draw.particles.id(), draw.dynamic.id())
+                (
+                    draw.particles.id(),
+                    draw.dynamic.id(),
+                    draw.mesh.clone(),
+                    draw.material.clone(),
+                    draw.capacity,
+                )
             } else {
                 // A new emitter here, or more particles than the buffers
                 // hold: new buffers, mesh and material.
@@ -293,15 +316,24 @@ pub fn run_sets(
                     means: means.0.clone(),
                     key: gpu.key,
                 });
-                let ids = (particles.id(), dynamic.id());
+                let mesh = meshes.add(mesh);
+                let ids = (
+                    particles.id(),
+                    dynamic.id(),
+                    mesh.clone(),
+                    material.clone(),
+                    capacity,
+                );
                 commands.entity(child).insert((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(material),
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material.clone()),
                     EmitterDraw {
                         particles,
                         dynamic,
                         capacity,
                         emitter: key,
+                        mesh,
+                        material,
                     },
                 ));
                 ids
@@ -309,9 +341,6 @@ pub fn run_sets(
             uploads
                 .0
                 .push((particles, particle_bytes(view.particles).into()));
-            let capacity = draws
-                .get(child)
-                .map_or(count.next_power_of_two().max(16), |d| d.capacity);
             let extra = extra_for(p, &view.dynamic, eye, camera_rotation);
             let counts = [
                 count as u32,
@@ -322,6 +351,18 @@ pub fn run_sets(
             uploads
                 .0
                 .push((dynamic, dynamic_bytes(&view.dynamic, counts, &extra).into()));
+            let haze_stage = live_haze.0.and_then(|_| match p.pixel_program.get(..12) {
+                Some("47897e0ca792") => Some(HazeStage::Mask),
+                Some("e76f4107e1bc") => Some(HazeStage::Effect),
+                _ => None,
+            });
+            if let Some(stage) = haze_stage {
+                if let Some(material) = materials.get(&material) {
+                    haze_draws.0.push((stage, mesh, material.clone()));
+                }
+                commands.entity(child).insert(Visibility::Hidden);
+                continue;
+            }
             // Emitters of a set draw in creation order (the game sorts sets,
             // not emitters): each later one sits a centimetre nearer the
             // camera for Bevy's transparent sort.

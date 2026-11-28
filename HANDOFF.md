@@ -120,13 +120,14 @@ downstream contribution are verified. E13765's mesh matches
 both captured targets exactly. The renderer's independent indexed
 Vulkan passes also reproduce both active targets exactly with
 `BOTW_HAZE_RASTER` and the exported post-VS input. Connect the live
-emitter state to these passes. The `BOTW_HAZE_LIVE_BASES=1`
-diagnostic verifies the unmerged near mask, two depth guides,
-and scene HDR from the live frame. It still uses captured indexed
-draws. The live vertex shader now has the mask emitter's verified
-animated mesh UV and EP04 fade. Route the existing emitter
-simulation buffers to R16F and RGBA16F, then connect the live
-haze palette.
+emitter state to these passes with `BOTW_HAZE_LIVE=0.7`. The
+capture-free path is verified in clear sunset and cloudy night
+frames, including live palette changes and both target writes.
+The numeric setting supplies VFog concentration until the
+native activation writer is traced. For scene parity, trace
+that writer and compare a controlled native sequence against the
+live path. The fixture replay remains available for exact
+shader and raster comparisons.
 The same-input display curve is verified at the sampled points.
 The weather replays are additional validation scenes.
 

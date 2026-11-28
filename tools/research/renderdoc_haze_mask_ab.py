@@ -291,6 +291,65 @@ def compare_renderer(replay, fixture):
     raise RuntimeError("Missing renderer pass: " + ", ".join(pending))
 
 
+def verify_live_renderer(replay):
+    """Check the live targets and their inputs, using only a renderer capture."""
+    actions = list(flatten(replay.GetRootActions()))
+    textures = {t.resourceId: t for t in replay.GetTextures()}
+    found = {}
+    stages = ("live_haze_mask", "live_haze_effect", "composite_overlay")
+    for action in reversed(actions):
+        if not (action.flags & rd.ActionFlags.Drawcall):
+            continue
+        count = action.numIndices
+        if count < 3 or (count != 3 and count % 144 != 0 and count % 480 != 0):
+            continue
+        replay.SetFrameEvent(action.eventId, False)
+        p = replay.GetPipelineState()
+        shader = p.GetShaderReflection(rd.ShaderStage.Pixel)
+        if not shader or shader.entryPoint not in stages or shader.entryPoint in found:
+            continue
+        rid = p.GetOutputTargets()[0].resource
+        t = textures[rid]
+        row = {
+            "event": action.eventId, "indices": action.numIndices,
+            "extent": [t.width, t.height], "format": t.format.Name(),
+            "inputs": [str(r.descriptor.resource) for r in p.GetReadOnlyResources(rd.ShaderStage.Pixel)],
+        }
+        if shader.entryPoint == "live_haze_effect":
+            constants = p.GetConstantBlocks(rd.ShaderStage.Pixel)
+            for block in constants:
+                b = block.descriptor
+                details = shader.constantBlocks[block.access.index]
+                # wgpu compacts the ten sparse emitter bindings for Vulkan.
+                if details.fixedBindNumber == 9:
+                    data = bytes(replay.GetBufferData(b.resource, b.byteOffset, 16))
+                    row["palette"] = struct.unpack("<4f", data)
+                    break
+        replay.SetFrameEvent(action.eventId, True)
+        subresource = rd.Subresource(0, 0, 0)
+        after = bytes(replay.GetTextureData(rid, subresource))
+        if shader.entryPoint == "live_haze_mask":
+            copy = next(a for a in reversed(actions) if a.eventId < action.eventId and a.copyDestination == rid)
+            replay.SetFrameEvent(copy.eventId, True)
+            before = bytes(replay.GetTextureData(rid, subresource))
+            row["changed_texels"] = changed(before, after, 2)
+        if shader.entryPoint == "live_haze_effect":
+            clear = struct.pack("<4H", 0, 0, 0, 0x3c00) * (t.width * t.height)
+            row["changed_texels"] = changed(clear, after, 8)
+        row["output"] = str(rid)
+        found[shader.entryPoint] = row
+        if len(found) == len(stages):
+            break
+
+    assert len(found) == len(stages), found
+    assert found["live_haze_mask"]["changed_texels"] > 0, found
+    assert found["live_haze_effect"]["changed_texels"] > 0, found
+    assert "palette" in found["live_haze_effect"], found
+    assert found["live_haze_mask"]["output"] in found["live_haze_effect"]["inputs"], found
+    assert found["live_haze_effect"]["output"] in found["composite_overlay"]["inputs"], found
+    return found
+
+
 def compare(replay):
     textures = {str(t.resourceId): t for t in replay.GetTextures()}
 
@@ -365,7 +424,12 @@ with (out / "haze-mask-ab-verified.log").open("w", encoding="utf-8", buffering=1
         assert capture.OpenFile(capture_path, "", None) == rd.ResultCode.Succeeded
         status, replay = capture.OpenCapture(rd.ReplayOptions(), None)
         assert status == rd.ResultCode.Succeeded, status
-        report = compare_renderer(replay, Path(os.environ["BOTW_HAZE_EXPORT"])) if renderer else compare(replay)
+        if renderer and os.environ.get("BOTW_HAZE_VERIFY_LIVE"):
+            report = verify_live_renderer(replay)
+        elif renderer:
+            report = compare_renderer(replay, Path(os.environ["BOTW_HAZE_EXPORT"]))
+        else:
+            report = compare(replay)
         print(json.dumps(report, indent=2))
     except Exception:
         traceback.print_exc()

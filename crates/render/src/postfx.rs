@@ -38,12 +38,13 @@ use bevy::render::render_resource::binding_types::{sampler, texture_2d, uniform_
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::texture::{CachedTexture, GpuImage, TextureCache};
-use bevy::render::view::ViewTarget;
+use bevy::render::view::{ViewTarget, ViewUniformOffset};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
 use crate::daynight::{Environment, Sky};
 use crate::{clouds::reduced::ReducedFrame, volume_mask::VolumeMaskTextures};
 
+mod haze_live;
 mod haze_raster;
 mod overlay;
 
@@ -89,6 +90,7 @@ impl Plugin for PostFxPlugin {
         };
         render_app
             .add_systems(RenderStartup, overlay::init)
+            .add_systems(RenderStartup, haze_live::init)
             .add_systems(RenderStartup, init_pipelines)
             .add_systems(
                 Render,
@@ -142,6 +144,7 @@ pub struct PostFx {
     pub final_gather: Vec4,
     pub tone: Vec4,
     pub correction: Vec4,
+    pub haze_palette: Vec4,
 }
 
 impl Default for PostFx {
@@ -199,6 +202,10 @@ pub fn postfx(environment: &Environment, sky: Option<&Sky>, choice: ToneChoice) 
         (1.0, 1.0)
     };
     PostFx {
+        haze_palette: sky.map_or(Vec4::ZERO, |sky| {
+            Vec3::from_array(sky.palette.volume_mask_color[..3].try_into().unwrap())
+                .extend(sky.palette.volume_mask_intensity * sky.scalars.volume_mask)
+        }),
         mask_weight,
         mask_param,
         layer1: layer(0),
@@ -464,17 +471,21 @@ fn game_postfx(
         &DynamicUniformIndex<PostFx>,
         Option<&BloomLevels>,
         Option<&VolumeMaskTextures>,
+        &ViewUniformOffset,
     )>,
     pipelines: Res<PostFxPipelines>,
     pipeline_cache: Res<PipelineCache>,
     uniforms: Res<ComponentUniforms<PostFx>>,
     overlay: Option<Res<overlay::OverlayReplay>>,
+    live_haze: Option<Res<haze_live::LiveHaze>>,
+    haze_inputs: haze_live::Inputs,
+    mut texture_cache: ResMut<TextureCache>,
     reduced: Option<Res<ReducedFrame>>,
     images: Res<RenderAssets<GpuImage>>,
     queue: Res<RenderQueue>,
     mut ctx: RenderContext,
 ) {
-    let (target, settings, uniform_index, levels, volume) = view.into_inner();
+    let (target, settings, uniform_index, levels, volume, view_offset) = view.into_inner();
     let Some(uniform) = uniforms.binding() else {
         return;
     };
@@ -517,6 +528,28 @@ fn game_postfx(
     let bloom_on = settings.correction.z > 0.5;
     let encoder = ctx.command_encoder();
     encoder.push_debug_group("game_postfx");
+    let live_scene = if overlay.is_none() {
+        live_haze
+            .as_deref()
+            .zip(bases.as_ref())
+            .and_then(|(live, bases)| {
+                live.draw(
+                    encoder,
+                    &device,
+                    &queue,
+                    &pipeline_cache,
+                    &mut texture_cache,
+                    &images,
+                    &haze_inputs,
+                    view_offset,
+                    bases,
+                    target.main_texture().size(),
+                    settings.haze_palette,
+                )
+            })
+    } else {
+        None
+    };
     let scene = overlay
         .as_deref()
         .and_then(|overlay| {
@@ -529,6 +562,7 @@ fn game_postfx(
                 bases,
             )
         })
+        .or(live_scene.as_ref())
         .unwrap_or(post_process.source);
     let bloom = match levels {
         Some(levels) if bloom_on => {

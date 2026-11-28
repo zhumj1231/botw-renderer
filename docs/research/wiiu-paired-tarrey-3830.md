@@ -515,6 +515,34 @@ consumes the new mask. The fixed-input regression still reproduces
 all 14,400 R16F and 230,400 RGBA16F texels exactly. This diagnostic
 still uses captured particle geometry and fragment palette values.
 
+### Capture-free live emitters
+
+With the normal baked assets, set `BOTW_HAZE_LIVE=0.7` and leave all
+capture replay variables unset. The numeric setting in (0, 1] is
+the diagnostic VFog concentration (SI-WTH-22). The camera's two
+ELink branches drive the normal emitter simulation. GPU draws
+reuse its mesh, particle attributes, dynamic block, UVs and EP04
+logic. The draws go exclusively to the reduced R16F and RGBA16F
+passes. The HDR composite uses live depth and scene color.
+
+The haze shader reads the current sky palette's VolumeMaskColor
+and VolumeMaskIntencity, with the existing climate/weather scalar
+applied to intensity. The paired clear sunset capture reads
+`(0.942, 1.0, 0.39, 3.5)`, matching the original frame 3830
+constant. The cloudy 22:00 capture reads `(0.0, 0.193, 0.246, 0.75)`.
+
+| Live Vulkan run | R16F updated texels | RGBA16F updated texels |
+| --- | ---: | ---: |
+| 17:40, clear, 1280×720 | 8,930 | 188,984 |
+| 22:00, cloudy, 640×360 | 2,346 | 47,182 |
+
+Both captures verify the mask resource feeds the haze shader and
+that the haze target is sampled by the HDR composite. Use the
+existing renderer comparison script with `BOTW_HAZE_VERIFY_LIVE=1`
+and `BOTW_HAZE_RENDERER_CAPTURE`. This check uses only the renderer
+capture. The original VFog activation writer, seed/frame parity,
+and live pixel-for-pixel comparison are open.
+
 The live vertex path can take the two meshes' `Sem7` from their
 baked RGBA vertex colors. Every vertex in both E10819 and E13765
 matches the corresponding baked color after conversion to f32.
