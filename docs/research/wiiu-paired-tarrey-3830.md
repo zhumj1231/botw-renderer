@@ -404,8 +404,11 @@ Cross-check against the matching local Wii U bake of
   primitive 3500784928. Primitive 1775848997 shares that mesh data.
   Intersecting the mesh and texture IDs in the emitter definitions
   leaves `Haze_Far` in `VolumeMaskFog02` and
-  `VolumeMaskAdd01test`. Resolve the exact set by matching the native
-  shader, which differs between these two emitters.
+  `VolumeMaskAdd01test`. The captured squared texture, disabled
+  depth test and source-alpha RGB blend match `VolumeMaskAdd01test`
+  (path 24, blend type 0). `VolumeMaskFog02` selects the unsquared,
+  depth-tested additive variant. `VolumeMaskAdd01` shares the shader
+  and texture but uses primitive 3705724266.
 - At E13765, all 480 indices and all 102 XYZ positions match resident
   primitive 1076106540, used by `Haze_Far_simple_new` in
   `VolumeMaskFog01` and `VolumeMaskFog01_Demo`. Those definitions
@@ -426,6 +429,33 @@ This supports a palette-derived color. The source of the fourth
 component and the CPU upload path are open. The next live-renderer
 checkpoint is the R16F mask update and the RGBA16F effect draw,
 each compared against its own capture boundary.
+
+### Mask shader and causal A/B
+
+At E10819 the BC4 sampler view maps every component of sampled RGBA
+to red. The fragment samples scalar `m` at `Sem8.xy` and computes
+`src.r = Sem7.r × lerp(Sem1.r, Sem0.r, m²)` and
+`src.a = Sem4.x × saturate(Sem7.a × m × (Sem0.a − Sem1.a))`.
+It discards at the alpha threshold. The R16F color blend applies
+`mask = src.r × src.a + mask × (1 − src.a)`. Instrumented RenderDoc
+replay confirmed the red-to-alpha mapping at all 35 sampled passing
+fragments across 10 coordinates. Native blend writebacks differ from
+the CPU calculation by 0.000370 mean and 0.000913 maximum absolute
+R16F value for those fragments.
+
+The [mask A/B replay script](../../tools/research/renderdoc_haze_mask_ab.py)
+uses the same environment as the overlay exporter and needs
+`spirv-cross` on PATH. It makes the mask shader discard in an offline
+replay. The original and bypass runs have identical pre-mask,
+pre-E13765 effect, and pre-E13778 HDR buffers. After the mask sequence,
+the bypass result equals the pre-mask buffer. The haze effect differs
+at 188,503 half-resolution texels, and the E13778 HDR result differs
+at 615,466 full-resolution pixels.
+
+With the mask draws active, mean linear HDR RGB relative to the bypass
+changes by `(−0.0707, −0.0740, −0.0271)` on the far-slope box and by
+`(−0.0941, −0.0965, −0.0304)` on sky. The localized haze draw adds
+color while the preceding mask draws restrain its strength.
 
 A separate forward-mode Vulkan screenshot at 640×360 verified that
 materials still render when shared pre-shading is unavailable.

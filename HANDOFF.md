@@ -113,11 +113,12 @@ pre-shaded sun term. Frame 3830 establishes the E13765 geometry draw,
 its 160×90 mask input, and the depth-guided E13778 HDR composite. The
 full-frame CPU comparison and E13765 A/B are verified. The renderer-side
 HDR composite is also verified on Vulkan in `BOTW_OVERLAY_REPLAY` mode
-with the four original inputs. The 160×90 mask draws and E13765
-mesh are matched to Resident haze assets. Resolve the upstream
-emitter's remaining shader-level ambiguity, then reconstruct its
-mask update and E13765 as separate passes before enabling the
-composite on normal scene inputs.
+with the four original inputs. The 160×90 mask draws match
+`VolumeMaskAdd01test/Haze_Far` and their shader swizzle, blend and
+downstream contribution are verified. E13765's mesh matches
+`Haze_Far_simple_new`. Reconstruct the R16F mask update and the
+RGBA16F effect draw as separate passes, starting with captured
+geometry before driving them from live emitter state.
 The same-input display curve is verified at the sampled points.
 The weather replays are additional validation scenes.
 
