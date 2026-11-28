@@ -37,6 +37,8 @@ usage: bake [options]
   --region <name>  the place to bake around (a location marker), default hateno
   --radius <m>     half the side of the region's square, default 1000
   --out <dir>      default assets/ in the workspace
+  --map-delete-flag <name>  apply static Delete links for an active save flag;
+                            repeatable, affects the objects step
   --only <steps>   comma-separated subset of: places, light, sky, terrain,
                    terrain-textures, water, grass, objects, models, trees,
                    effects, elink, characters, npcs (models and effects
@@ -66,6 +68,7 @@ struct Args {
     radius: f32,
     out: PathBuf,
     only: Vec<String>,
+    map_delete_flags: std::collections::BTreeSet<String>,
 }
 
 fn parse_args() -> Result<Option<Args>, String> {
@@ -76,6 +79,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         radius: 1000.0,
         out: workspace.join("assets"),
         only: STEPS.iter().map(|s| s.to_string()).collect(),
+        map_delete_flags: Default::default(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -85,6 +89,9 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--region" => args.region = value()?,
             "--radius" => args.radius = value()?.parse().map_err(|_| "--radius: not a number")?,
             "--out" => args.out = value()?.into(),
+            "--map-delete-flag" => {
+                args.map_delete_flags.insert(value()?);
+            }
             "--only" => {
                 args.only = value()?.split(',').map(str::to_owned).collect();
                 if let Some(bad) = args.only.iter().find(|s| !STEPS.contains(&s.as_str())) {
@@ -194,7 +201,7 @@ fn run(args: &Args) -> Result<(), String> {
             center: [place.position[0], place.position[2]],
             radius: args.radius,
         };
-        objects::bake(&roots, &region, &args.out)?;
+        objects::bake(&roots, &region, &args.out, &args.map_delete_flags)?;
     }
     if step("models") {
         models::bake(&roots, &args.out)?;

@@ -4,7 +4,7 @@
 //! `Pack/TitleBG.pack`) and a `_Dynamic` unit (loose in `Map/MainField/<cell>/`,
 //! newest in the update). Both are Yaz0-compressed BYML with an `Objs` array.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use roead::byml::Byml;
 
@@ -30,11 +30,47 @@ pub struct PlacedActor {
 
 /// Parses a (possibly Yaz0-compressed) map unit.
 pub fn parse_unit(bytes: &[u8]) -> Result<Vec<PlacedActor>> {
+    parse_unit_with_delete_flags(bytes, &BTreeSet::new())
+}
+
+/// Applies Delete links for explicitly active, simple `LinkTagAnd` save flags.
+/// Link propagation and the runtime of the linked actors are outside this snapshot.
+pub fn parse_unit_with_delete_flags(bytes: &[u8], flags: &BTreeSet<String>) -> Result<Vec<PlacedActor>> {
     let data = crate::yaz0::decompress_if(bytes)?;
     let doc = Byml::from_binary(&data[..]).map_err(|_| FormatError::Invalid("map unit: not BYML"))?;
     let Ok(root) = doc.as_map() else { return Err(FormatError::Invalid("map unit: root is not a map")) };
     let Some(Byml::Array(objs)) = root.get("Objs") else { return Ok(Vec::new()) };
-    Ok(objs.iter().filter_map(|obj| actor(obj.as_map().ok()?)).collect())
+    let mut deleted = BTreeSet::new();
+    if !flags.is_empty() {
+        for source in objs.iter().filter_map(|obj| obj.as_map().ok()) {
+            if !matches!(source.get("UnitConfigName"), Some(Byml::String(name)) if name == "LinkTagAnd") {
+                continue;
+            }
+            let Some(Byml::Map(params)) = source.get("!Parameters") else { continue };
+            let Some(Byml::String(flag)) = params.get("SaveFlag") else { continue };
+            if !flags.contains(flag.as_str())
+                || params.get("SaveFlagOnOffType") != Some(&Byml::I32(0))
+                || params.get("MakeSaveFlag") != Some(&Byml::I32(0))
+                || params.get("NoChangeSignal") != Some(&Byml::Bool(false))
+                || params.get("IncrementSave") != Some(&Byml::Bool(false))
+            {
+                continue;
+            }
+            let Some(Byml::Array(links)) = source.get("LinksToObj") else { continue };
+            for link in links.iter().filter_map(|link| link.as_map().ok()) {
+                if matches!(link.get("DefinitionName"), Some(Byml::String(name)) if name == "Delete")
+                    && let Some(Byml::U32(target)) = link.get("DestUnitHashId")
+                {
+                    deleted.insert(*target);
+                }
+            }
+        }
+    }
+    Ok(objs
+        .iter()
+        .filter_map(|obj| actor(obj.as_map().ok()?))
+        .filter(|actor| !deleted.contains(&actor.hash_id))
+        .collect())
 }
 
 fn actor(obj: &roead::byml::Map) -> Option<PlacedActor> {

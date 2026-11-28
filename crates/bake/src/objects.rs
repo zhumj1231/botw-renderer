@@ -76,7 +76,12 @@ impl Region {
 }
 
 /// Bakes `objects/`: cells, the `_Far` index and the actors' models.
-pub fn bake(roots: &ContentRoots, region: &Region, out: &Path) -> Result<(), String> {
+pub fn bake(
+    roots: &ContentRoots,
+    region: &Region,
+    out: &Path,
+    map_delete_flags: &BTreeSet<String>,
+) -> Result<(), String> {
     let started = std::time::Instant::now();
     let title_bg = roots
         .find("Pack/TitleBG.pack")
@@ -86,8 +91,9 @@ pub fn bake(roots: &ContentRoots, region: &Region, out: &Path) -> Result<(), Str
 
     // Every cell: the `_Far` stand-ins come from all of them.
     let cells: Vec<String> = all_cells().collect();
-    let read: Vec<Result<Vec<botw_formats::map::PlacedActor>, String>> =
-        parallel(&cells, |cell| read_cell(roots, title_bg.as_deref(), cell));
+    let read: Vec<Result<Vec<botw_formats::map::PlacedActor>, String>> = parallel(&cells, |cell| {
+        read_cell_with_delete_flags(roots, title_bg.as_deref(), cell, map_delete_flags)
+    });
     let mut units = Vec::with_capacity(cells.len());
     for (cell, actors) in cells.iter().zip(read) {
         units.push((
@@ -203,6 +209,15 @@ pub fn read_cell(
     title_bg: Option<&Vec<u8>>,
     cell: &str,
 ) -> Result<Vec<botw_formats::map::PlacedActor>, String> {
+    read_cell_with_delete_flags(roots, title_bg, cell, &BTreeSet::new())
+}
+
+fn read_cell_with_delete_flags(
+    roots: &ContentRoots,
+    title_bg: Option<&Vec<u8>>,
+    cell: &str,
+    flags: &BTreeSet<String>,
+) -> Result<Vec<botw_formats::map::PlacedActor>, String> {
     let read = |path: std::path::PathBuf| {
         std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
     };
@@ -219,7 +234,10 @@ pub fn read_cell(
         },
     };
     if let Some(bytes) = bytes {
-        actors.extend(botw_formats::map::parse_unit(&bytes).map_err(|e| e.to_string())?);
+        actors.extend(
+            botw_formats::map::parse_unit_with_delete_flags(&bytes, flags)
+                .map_err(|e| e.to_string())?,
+        );
     }
     if let Some(path) = roots.find(format!("Map/MainField/{cell}/{cell}_Dynamic.smubin")) {
         actors.extend(botw_formats::map::parse_unit(&read(path)?).map_err(|e| e.to_string())?);
